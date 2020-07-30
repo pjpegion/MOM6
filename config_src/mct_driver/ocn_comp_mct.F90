@@ -36,7 +36,7 @@ use MOM_error_handler,    only: MOM_error, FATAL, is_root_pe, WARNING
 use MOM_time_manager,     only: time_type, set_date, set_time, set_calendar_type, NOLEAP
 use MOM_time_manager,     only: operator(+), operator(-), operator(*), operator(/)
 use MOM_time_manager,     only: operator(==), operator(/=), operator(>), get_time
-use MOM_file_parser,      only: get_param, log_version, param_file_type
+use MOM_file_parser,      only: get_param, log_version, param_file_type, close_param_file
 use MOM_get_input,        only: Get_MOM_Input, directories
 use MOM_EOS,              only: gsw_sp_from_sr, gsw_pt_from_ct
 use MOM_constants,        only: CELSIUS_KELVIN_OFFSET
@@ -109,8 +109,9 @@ subroutine ocn_init_mct( EClock, cdata_o, x2o_o, o2x_o, NLFilename )
   type(mct_aVect)             , intent(inout) :: o2x_o       !< Fluxes from ocean to coupler, computed by ocean
   character(len=*), optional  , intent(in)    :: NLFilename  !< Namelist filename
 
-  !  local variables
-  type(time_type)         :: time0                !< Model start time
+  !  local variable
+  type(time_type)         :: time0                !< Start time of coupled model's calendar.
+  type(time_type)         :: time_start           !< The time at which to initialize the ocean model
   type(ESMF_time)         :: time_var             !< ESMF_time variable to query time
   type(ESMF_time)         :: time_in_ESMF         !< Initial time for ocean
   type(ESMF_timeInterval) :: ocn_cpl_interval     !< Ocean coupling interval
@@ -202,10 +203,15 @@ subroutine ocn_init_mct( EClock, cdata_o, x2o_o, o2x_o, NLFilename )
 
   call set_calendar_type(NOLEAP)  !TODO: confirm this
 
-  ! Get the initial time
-  call ESMF_ClockGet(EClock, currTime=time_var, rc=rc)
+  ! Get start time
+  call ESMF_ClockGet(EClock, StartTime=time_var, rc=rc)
   call ESMF_TimeGet(time_var, yy=year, mm=month, dd=day, h=hour, m=minute, s=seconds, rc=rc)
   time0 = set_date(year, month, day, hour, minute, seconds, err_msg=err_msg)
+
+  ! Get current time
+  call ESMF_ClockGet(EClock, currTime=time_var, rc=rc)
+  call ESMF_TimeGet(time_var, yy=year, mm=month, dd=day, h=hour, m=minute, s=seconds, rc=rc)
+  time_start = set_date(year, month, day, hour, minute, seconds, err_msg=err_msg)
 
   ! Debugging clocks
   if (debug .and. is_root_pe()) then
@@ -275,11 +281,14 @@ subroutine ocn_init_mct( EClock, cdata_o, x2o_o, o2x_o, NLFilename )
     glb%c1 = 0.0; glb%c2 = 0.0; glb%c3 = 0.0; glb%c4 = 0.0
   endif
 
+  ! Close param file before it gets opened by ocean_model_init again.
+  call close_param_file(param_file)
+
   ! Initialize the MOM6 model
   runtype = get_runtype()
   if (runtype == "initial") then
     ! startup (new run) - 'n' is needed below since we don't specify input_filename in input.nml
-    call ocean_model_init(glb%ocn_public, glb%ocn_state, time0, time0, input_restart_file = 'n')
+    call ocean_model_init(glb%ocn_public, glb%ocn_state, time0, time_start, input_restart_file = 'n')
   else  ! hybrid or branch or continuos runs
     ! get output path root
     call seq_infodata_GetData( glb%infodata, outPathRoot=restartpath )
@@ -295,7 +304,7 @@ subroutine ocn_init_mct( EClock, cdata_o, x2o_o, o2x_o, NLFilename )
       write(glb%stdout,*) 'Reading restart file: ',trim(restartfile)
     end if
     call shr_file_freeUnit(nu)
-    call ocean_model_init(glb%ocn_public, glb%ocn_state, time0, time0, input_restart_file=trim(restartfile))
+    call ocean_model_init(glb%ocn_public, glb%ocn_state, time0, time_start, input_restart_file=trim(restartfile))
   endif
   if (is_root_pe()) then
     write(glb%stdout,'(/12x,a/)') '======== COMPLETED MOM INITIALIZATION ========'
