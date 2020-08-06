@@ -70,6 +70,7 @@ use MOM_get_input, only : directories
 use MOM_io, only : MOM_io_init
 use MOM_restart, only : register_restart_field, query_initialized, save_restart
 use MOM_restart, only : restart_init, MOM_restart_CS
+use MOM_stoch_eos, only : MOM_stoch_eos_run
 use MOM_time_manager, only : time_type, time_type_to_real, operator(+)
 use MOM_time_manager, only : operator(-), operator(>), operator(*), operator(/)
 
@@ -111,6 +112,10 @@ type, public :: MOM_dyn_unsplit_RK2_CS ; private
     CAv, &    !< CAv = -f*u - u.grad(v) [L T-2 ~> m s-2].
     PFv, &    !< PFv = -dM/dy [L T-2 ~> m s-2].
     diffv     !< Meridional acceleration due to convergence of the along-isopycnal stress tensor [L T-2 ~> m s-2].
+  real ALLOCABLE_, dimension(NIMEM_,NJMEM_) :: stoch_eos_pattern
+                    !< Random pattern for stochastic EOS
+  real ALLOCABLE_, dimension(NIMEM_,NJMEM_) :: stoch_phi_pattern
+                    !< temporal correlation stochastic EOS (deugging)
 
   real, pointer, dimension(:,:) :: taux_bot => NULL() !< frictional x-bottom stress from the ocean
                                                       !! to the seafloor [R L Z T-2 ~> Pa]
@@ -129,10 +134,12 @@ type, public :: MOM_dyn_unsplit_RK2_CS ; private
   logical :: debug   !< If true, write verbose checksums for debugging purposes.
 
   logical :: module_is_initialized = .false. !< Record whether this mouled has been initialzed.
+  logical :: use_stoch_eos  !< If true, use the stochastic equation of state (Stanley et al. 2020)
 
   !>@{ Diagnostic IDs
   integer :: id_uh = -1, id_vh = -1
   integer :: id_PFu = -1, id_PFv = -1, id_CAu = -1, id_CAv = -1
+  integer :: id_stoch_eos  = -1, id_stoch_phi  = -1
   !>@}
 
   type(diag_ctrl), pointer :: diag => NULL() !< A structure that is used to
@@ -240,6 +247,10 @@ subroutine step_MOM_dyn_unsplit_RK2(u_in, v_in, h_in, tv, visc, Time_local, dt, 
   real, dimension(SZI_(G),SZJ_(G),SZK_(G)) :: h_av, hp
   real, dimension(SZIB_(G),SZJ_(G),SZK_(G)) :: up ! Predicted zonal velocities [L T-1 ~> m s-1]
   real, dimension(SZI_(G),SZJB_(G),SZK_(G)) :: vp ! Predicted meridional velocities [L T-1 ~> m s-1]
+  real, dimension(SZI_(G),SZJ_(G)) :: &
+    rp_out      ! sea surface height, which may be based on eta_av [m]
+  real, dimension(SZI_(G),SZJ_(G)) :: &
+    phi_out      ! sea surface height, which may be based on eta_av [m]
   real, dimension(:,:), pointer :: p_surf => NULL()
   real :: dt_pred   ! The time step for the predictor part of the baroclinic time stepping [T ~> s]
   real :: dt_visc   ! The time step for a part of the update due to viscosity [T ~> s]
@@ -252,6 +263,15 @@ subroutine step_MOM_dyn_unsplit_RK2(u_in, v_in, h_in, tv, visc, Time_local, dt, 
   h_av(:,:,:) = 0; hp(:,:,:) = 0
   up(:,:,:) = 0
   vp(:,:,:) = 0
+  if (CS%use_stoch_eos) then
+     call MOM_stoch_eos_run(G,u_in,v_in,CS%stoch_eos_pattern,CS%stoch_phi_pattern,dt)
+     do j=js,je ; do i=is,ie
+        rp_out(i,j) = CS%stoch_eos_pattern(i,j)
+        phi_out(i,j) = CS%stoch_phi_pattern(i,j)
+     enddo ; enddo
+     if (CS%id_stoch_eos > 0) call post_data(CS%id_stoch_eos, rp_out, CS%diag, mask=G%mask2dT)
+     if (CS%id_stoch_phi > 0) call post_data(CS%id_stoch_phi, phi_out, CS%diag, mask=G%mask2dT)
+  endif
 
   dyn_p_surf = associated(p_surf_begin) .and. associated(p_surf_end)
   if (dyn_p_surf) then
@@ -604,9 +624,14 @@ subroutine initialize_dyn_unsplit_RK2(u, v, h, Time, G, GV, US, param_file, diag
                  default=.false., debuggingParam=.true.)
   call get_param(param_file, mdl, "TIDES", use_tides, &
                  "If true, apply tidal momentum forcing.", default=.false.)
+  call get_param(param_file, "MOM", "STOCH_EOS", CS%use_stoch_eos, &
+                 "If true, stochastic perturbations are applied "//&
+                 "to the EOS.", default=.false.)
 
   allocate(CS%taux_bot(IsdB:IedB,jsd:jed)) ; CS%taux_bot(:,:) = 0.0
   allocate(CS%tauy_bot(isd:ied,JsdB:JedB)) ; CS%tauy_bot(:,:) = 0.0
+  if (CS%use_stoch_eos) ALLOC_(CS%stoch_eos_pattern(isd:ied,jsd:jed)) ; CS%stoch_eos_pattern(:,:) = 0.0
+  if (CS%use_stoch_eos) ALLOC_(CS%stoch_phi_pattern(isd:ied,jsd:jed)) ; CS%stoch_phi_pattern(:,:) = 0.0
 
   MIS%diffu => CS%diffu ; MIS%diffv => CS%diffv
   MIS%PFu => CS%PFu ; MIS%PFv => CS%PFv
@@ -649,6 +674,10 @@ subroutine initialize_dyn_unsplit_RK2(u, v, h, Time, G, GV, US, param_file, diag
       'Zonal Pressure Force Acceleration', 'meter second-2', conversion=US%L_T2_to_m_s2)
   CS%id_PFv = register_diag_field('ocean_model', 'PFv', diag%axesCvL, Time, &
       'Meridional Pressure Force Acceleration', 'meter second-2', conversion=US%L_T2_to_m_s2)
+  CS%id_stoch_eos = register_diag_field('ocean_model', 'stoch_eos', diag%axesT1, Time, &
+      'random pattern for EOS', 'None')
+  CS%id_stoch_phi = register_diag_field('ocean_model', 'stoch_phi', diag%axesT1, Time, &
+      'phi for EOS', 'None')
 
   id_clock_Cor = cpu_clock_id('(Ocean Coriolis & mom advection)', grain=CLOCK_MODULE)
   id_clock_continuity = cpu_clock_id('(Ocean continuity equation)', grain=CLOCK_MODULE)

@@ -31,6 +31,7 @@ use MOM_io,                only : MOM_io_init, vardesc, var_desc
 use MOM_restart,           only : register_restart_field, register_restart_pair
 use MOM_restart,           only : query_initialized, save_restart
 use MOM_restart,           only : restart_init, is_new_run, MOM_restart_CS
+use MOM_stoch_eos,         only : MOM_stoch_eos_run
 use MOM_time_manager,      only : time_type, time_type_to_real, operator(+)
 use MOM_time_manager,      only : operator(-), operator(>), operator(*), operator(/)
 
@@ -99,6 +100,10 @@ type, public :: MOM_dyn_split_RK2_CS ; private
               !< The meridional layer accelerations due to the difference between
               !! the barotropic accelerations and the baroclinic accelerations
               !! that were fed into the barotopic calculation [L T-2 ~> m s-2]
+  real ALLOCABLE_, dimension(NIMEM_,NJMEM_) :: stoch_eos_pattern
+                    !< Random pattern for stochastic EOS
+  real ALLOCABLE_, dimension(NIMEM_,NJMEM_) :: stoch_phi_pattern
+                    !< temporal correlation stochastic EOS (deugging)
 
   ! The following variables are only used with the split time stepping scheme.
   real ALLOCABLE_, dimension(NIMEM_,NJMEM_)             :: eta    !< Instantaneous free surface height (in Boussinesq
@@ -153,6 +158,7 @@ type, public :: MOM_dyn_split_RK2_CS ; private
   logical :: debug_OBC !< If true, do debugging calls for open boundary conditions.
 
   logical :: module_is_initialized = .false. !< Record whether this mouled has been initialzed.
+  logical :: use_stoch_eos  !< If true, use the stochastic equation of state (Stanley et al. 2020)
 
   !>@{ Diagnostic IDs
   integer :: id_uh     = -1, id_vh     = -1
@@ -164,6 +170,7 @@ type, public :: MOM_dyn_split_RK2_CS ; private
   integer :: id_hf_PFu_2d = -1, id_hf_PFv_2d = -1
   ! integer :: id_hf_CAu    = -1, id_hf_CAv    = -1
   integer :: id_hf_CAu_2d = -1, id_hf_CAv_2d = -1
+  integer :: id_stoch_eos  = -1, id_stoch_phi  = -1
 
   ! Split scheme only.
   integer :: id_uav        = -1, id_vav        = -1
@@ -287,6 +294,10 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, Time_local, dt, forces, p_s
   real, dimension(SZIB_(G),SZJ_(G),SZK_(G)) :: up   ! Predicted zonal velocity [L T-1 ~> m s-1].
   real, dimension(SZI_(G),SZJB_(G),SZK_(G)) :: vp   ! Predicted meridional velocity [L T-1 ~> m s-1].
   real, dimension(SZI_(G),SZJ_(G),SZK_(G))  :: hp   ! Predicted thickness [H ~> m or kg m-2].
+  real, dimension(SZI_(G),SZJ_(G)) :: &
+    rp_out      ! sea surface height, which may be based on eta_av [m]
+  real, dimension(SZI_(G),SZJ_(G)) :: &
+    phi_out      ! sea surface height, which may be based on eta_av [m]
 
   real, dimension(SZIB_(G),SZJ_(G),SZK_(G)) :: u_bc_accel
   real, dimension(SZI_(G),SZJB_(G),SZK_(G)) :: v_bc_accel
@@ -343,7 +354,6 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, Time_local, dt, forces, p_s
   logical :: BT_cont_BT_thick ! If true, use the BT_cont_type to estimate the
                               ! relative weightings of the layers in calculating
                               ! the barotropic accelerations.
-  !---For group halo pass
   logical :: showCallTree, sym
 
   integer :: i, j, k, is, ie, js, je, Isq, Ieq, Jsq, Jeq, nz
@@ -363,6 +373,15 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, Time_local, dt, forces, p_s
     do j=G%jsdB,G%jedB ; do i=G%isd,G%ied   ;  vp(i,j,k) = 0.0 ; enddo ; enddo
     do j=G%jsd,G%jed   ; do i=G%isd,G%ied   ;  hp(i,j,k) = h(i,j,k) ; enddo ; enddo
   enddo
+  if (CS%use_stoch_eos) then
+     call MOM_stoch_eos_run(G,u,v,CS%stoch_eos_pattern,CS%stoch_phi_pattern,dt)
+     do j=js,je ; do i=is,ie
+        rp_out(i,j) = CS%stoch_eos_pattern(i,j)
+        phi_out(i,j) = CS%stoch_phi_pattern(i,j)
+     enddo ; enddo
+     if (CS%id_stoch_eos > 0) call post_data(CS%id_stoch_eos, rp_out, CS%diag, mask=G%mask2dT)
+     if (CS%id_stoch_phi > 0) call post_data(CS%id_stoch_phi, phi_out, CS%diag, mask=G%mask2dT)
+  endif
 
   ! Update CFL truncation value as function of time
   call updateCFLtruncationValue(Time_local, CS%vertvisc_CSp)
@@ -1185,9 +1204,14 @@ subroutine initialize_dyn_split_RK2(u, v, h, uh, vh, eta, Time, G, GV, US, param
   call get_param(param_file, mdl, "DEBUG_OBC", CS%debug_OBC, default=.false.)
   call get_param(param_file, mdl, "DEBUG_TRUNCATIONS", debug_truncations, &
                  default=.false.)
+  call get_param(param_file, "MOM", "STOCH_EOS", CS%use_stoch_eos, &
+                 "If true, stochastic perturbations are applied "//&
+                 "to the EOS.", default=.false.)
 
   allocate(CS%taux_bot(IsdB:IedB,jsd:jed)) ; CS%taux_bot(:,:) = 0.0
   allocate(CS%tauy_bot(isd:ied,JsdB:JedB)) ; CS%tauy_bot(:,:) = 0.0
+  if (CS%use_stoch_eos) ALLOC_(CS%stoch_eos_pattern(isd:ied,jsd:jed)) ; CS%stoch_eos_pattern(:,:) = 0.0
+  if (CS%use_stoch_eos) ALLOC_(CS%stoch_phi_pattern(isd:ied,jsd:jed)) ; CS%stoch_phi_pattern(:,:) = 0.0
 
   ALLOC_(CS%uhbt(IsdB:IedB,jsd:jed))          ; CS%uhbt(:,:)         = 0.0
   ALLOC_(CS%vhbt(isd:ied,JsdB:JedB))          ; CS%vhbt(:,:)         = 0.0
@@ -1418,6 +1442,10 @@ subroutine initialize_dyn_split_RK2(u, v, h, uh, vh, eta, Time, G, GV, US, param
   CS%id_hf_u_BT_accel_2d = register_diag_field('ocean_model', 'hf_u_BT_accel_2d', diag%axesCu1, Time, &
       'Depth-sum Fractional Thickness-weighted Barotropic Anomaly Zonal Acceleration', 'm s-2', &
       conversion=US%L_T2_to_m_s2)
+  CS%id_stoch_eos = register_diag_field('ocean_model', 'stoch_eos', diag%axesT1, Time, &
+      'random pattern for EOS', 'None')
+  CS%id_stoch_phi = register_diag_field('ocean_model', 'stoch_phi', diag%axesT1, Time, &
+      'phi for EOS', 'None')
   if(CS%id_hf_u_BT_accel_2d > 0) call safe_alloc_ptr(CS%ADp%diag_hfrac_u,IsdB,IedB,jsd,jed,nz)
 
   CS%id_hf_v_BT_accel_2d = register_diag_field('ocean_model', 'hf_v_BT_accel_2d', diag%axesCv1, Time, &

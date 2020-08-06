@@ -100,6 +100,7 @@ use MOM_set_visc,              only : set_viscous_BBL, set_viscous_ML, set_visc_
 use MOM_set_visc,              only : set_visc_register_restarts, set_visc_CS
 use MOM_sponge,                only : init_sponge_diags, sponge_CS
 use MOM_state_initialization,  only : MOM_initialize_state
+use MOM_stoch_eos,             only : MOM_stoch_eos_init
 use MOM_sum_output,            only : write_energy, accumulate_net_input
 use MOM_sum_output,            only : MOM_sum_output_init, sum_output_CS
 use MOM_ALE_sponge,            only : init_ALE_sponge_diags, ALE_sponge_CS
@@ -224,6 +225,7 @@ type, public :: MOM_control_struct ; private
   logical :: use_ALE_algorithm  !< If true, use the ALE algorithm rather than layered
                     !! isopycnal/stacked shallow water mode. This logical is set by calling the
                     !! function useRegridding() from the MOM_regridding module.
+  logical :: use_stoch_eos  !< If true, use the stochastic equation of state (Stanley et al. 2020)
   logical :: offline_tracer_mode = .false.
                     !< If true, step_offline() is called instead of step_MOM().
                     !! This is intended for running MOM6 in offline tracer mode
@@ -900,7 +902,7 @@ subroutine step_MOM(forces_in, fluxes_in, sfc_state, Time_start, time_int_in, CS
     call cpu_clock_begin(id_clock_diagnostics)
     if (CS%time_in_cycle > 0.0) then
       call enable_averages(CS%time_in_cycle, Time_local, CS%diag)
-      call post_surface_dyn_diags(CS%sfc_IDs, G, CS%diag, sfc_state_diag, ssh)
+      call post_surface_dyn_diags(CS%sfc_IDs, G, CS%diag, sfc_state, ssh)
     endif
     if (CS%time_in_thermo_cycle > 0.0) then
       call enable_averages(CS%time_in_thermo_cycle, Time_local, CS%diag)
@@ -1802,6 +1804,9 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, restart_CSp, &
                  "BULKMIXEDLAYER can not be used with USE_REGRIDDING. "//&
                  "The default is influenced by ENABLE_THERMODYNAMICS.", &
                  default=use_temperature .and. .not.CS%use_ALE_algorithm)
+  call get_param(param_file, "MOM", "STOCH_EOS", CS%use_stoch_eos, &
+                 "If true, stochastic perturbations are applied "//&
+                 "to the EOS.", default=.false.)
   call get_param(param_file, "MOM", "THICKNESSDIFFUSE", CS%thickness_diffuse, &
                  "If true, interface heights are diffused with a "//&
                  "coefficient of KHTH.", default=.false.)
@@ -2329,6 +2334,10 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, restart_CSp, &
   call MOM_grid_init(G_in, param_file, US, HI_in, bathymetry_at_vel=bathy_at_vel)
   call copy_dyngrid_to_MOM_grid(dG_in, G_in, US)
   call destroy_dyn_horgrid(dG_in)
+
+  if (CS%use_stoch_eos) then
+     call MOM_stoch_eos_init(G,param_file,global_indexing)
+  endif
 
   ! Set a few remaining fields that are specific to the ocean grid type.
   call set_first_direction(G, first_direction)
