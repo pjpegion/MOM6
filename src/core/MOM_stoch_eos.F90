@@ -63,7 +63,6 @@ contains
   rns=initializeRandomNumberStream(count4)
   !npts=(G%isd_global+1)*(G%jsd_global+1)
   npts=(G%Domain%niglobal+G%Domain%nihalo*2)*(G%Domain%njglobal+G%Domain%njhalo*2)
-  !print*,'seed is',count4,npts,G%Domain%niglobal,G%Domain%njglobal,G%Domain%nihalo,G%Domain%njhalo
   ! fill array with approximation of grid area
   if (global_index_logic) then
      do j=G%jsd,G%jed
@@ -78,8 +77,6 @@ contains
         enddo
      enddo
   endif
-  !print*,'stoch_init',minval(random_pattern),maxval(random_pattern),G%jsd,G%jed,G%isd,G%ied
-  !print*,'dx and dy=',G%dxT(2,2),G%dyT(2,2)
 
   
   end subroutine MOM_stoch_eos_init
@@ -96,6 +93,7 @@ contains
   real                                   :: phi,ubar,vbar
 
   call random_gauss(rns,rgauss)
+  !print*,'in stoch_run',first_time
   if (global_index_logic) then
      if (first_time) then
         do j=G%jsd,G%jed
@@ -134,7 +132,9 @@ contains
      endif
   endif
   first_time=.false.
-  !print*,'stoch_run',minval(random_pattern),maxval(random_pattern),minval(rgauss),maxval(rgauss)
+  !print*,'stoch_run ubar',minval(u),maxval(u),minval(v),maxval(v)
+  !print*,'stoch_run rp',minval(random_pattern),maxval(random_pattern),minval(rgauss),maxval(rgauss)
+  !print*,'stoch_run phi',minval(phi_out),maxval(phi_out),minval(rgauss),maxval(rgauss)
   !print*,'indicies',G%isd,G%ied,G%idg_offset,G%jsd,G%jed,G%jdg_offset
   !print*,'rgauss bounds',lbound(rgauss,1),lbound(rgauss,2),ubound(rgauss,1),ubound(rgauss,2)
   !print*,'rp bounds',lbound(random_pattern,1),lbound(random_pattern,2),ubound(random_pattern,1),ubound(random_pattern,2)

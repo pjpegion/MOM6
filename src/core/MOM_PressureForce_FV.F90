@@ -413,7 +413,7 @@ end subroutine PressureForce_FV_nonBouss
 !! To work, the following fields must be set outside of the usual (is:ie,js:je)
 !! range before this subroutine is called:
 !!   h(isB:ie+1,jsB:je+1), T(isB:ie+1,jsB:je+1), and S(isB:ie+1,jsB:je+1).
-subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm, pbce, eta)
+subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm, pbce, eta,stoch_eos_pattern)
   type(ocean_grid_type),                     intent(in)  :: G   !< Ocean grid structure
   type(verticalGrid_type),                   intent(in)  :: GV  !< Vertical grid structure
   type(unit_scale_type),                     intent(in)  :: US  !< A dimensional unit scaling type
@@ -431,6 +431,7 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
   real, dimension(SZI_(G),SZJ_(G)),          optional, intent(out) :: eta !< The bottom mass used to
                                                          !! calculate PFu and PFv [H ~> m or kg m-2], with any
                                                          !! tidal contributions or compressibility compensation.
+  real, dimension(SZI_(G),SZJ_(G)),          optional, intent(in)    :: stoch_eos_pattern ! random AR(1) for stochastic EOS
   ! Local variables
   real, dimension(SZI_(G),SZJ_(G),SZK_(G)+1) :: e ! Interface height in depth units [Z ~> m].
   real, dimension(SZI_(G),SZJ_(G))  :: &
@@ -502,7 +503,6 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
   do i=Isq,Ieq+1 ; p0(i) = 0.0 ; enddo
   use_ALE = .false.
   if (associated(ALE_CSp)) use_ALE = CS%reconstruct .and. use_EOS
-
   if (CS%Stanley_T2_det_coeff>=0.) then
     if (.not. associated(tv%varT)) call safe_alloc_ptr(tv%varT, G%isd, G%ied, G%jsd, G%jed, GV%ke)
     do k=1, nz ; do j=js-1,je+1 ; do i=is-1,ie+1
@@ -678,7 +678,6 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
   do k=1,nz
     ! Calculate 4 integrals through the layer that are required in the
     ! subsequent calculation.
-
     if (use_EOS) then
       ! The following routine computes the integrals that are needed to
       ! calculate the pressure gradient force. Linear profiles for T and S are
@@ -687,15 +686,22 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
       ! where the layers are located.
       if ( use_ALE ) then
         if ( CS%Recon_Scheme == 1 ) then
-          call int_density_dz_generic_plm(k, tv,  T_t, T_b, S_t, S_b, e, &
-                    rho_ref, CS%Rho0, GV%g_Earth, dz_neglect, G%bathyT, &
-                    G%HI, GV, tv%eqn_of_state, US, dpa, intz_dpa, intx_dpa, inty_dpa, &
-                    useMassWghtInterp=CS%useMassWghtInterp)
+              call int_density_dz_generic_plm(k, tv,  T_t, T_b, S_t, S_b, e, &
+                       rho_ref, CS%Rho0, GV%g_Earth, dz_neglect, G%bathyT, &
+                       G%HI, GV, tv%eqn_of_state, US, dpa, intz_dpa, intx_dpa, inty_dpa, &
+                       useMassWghtInterp=CS%useMassWghtInterp)
         elseif ( CS%Recon_Scheme == 2 ) then
-          call int_density_dz_generic_ppm(k, tv, T_t, T_b, S_t, S_b, e, &
-                    rho_ref, CS%Rho0, GV%g_Earth, dz_neglect, G%bathyT, &
-                    G%HI, GV, tv%eqn_of_state, US, dpa, intz_dpa, intx_dpa, inty_dpa, &
-                    useMassWghtInterp=CS%useMassWghtInterp)
+             if (present(stoch_eos_pattern)) then
+             call int_density_dz_generic_ppm(k, tv, T_t, T_b, S_t, S_b, e, &
+                       rho_ref, CS%Rho0, GV%g_Earth, dz_neglect, G%bathyT, &
+                       G%HI, GV, tv%eqn_of_state, US, dpa, intz_dpa, intx_dpa, inty_dpa, &
+                       useMassWghtInterp=CS%useMassWghtInterp,stoch_eos_pattern=stoch_eos_pattern)
+              else
+             call int_density_dz_generic_ppm(k, tv, T_t, T_b, S_t, S_b, e, &
+                       rho_ref, CS%Rho0, GV%g_Earth, dz_neglect, G%bathyT, &
+                       G%HI, GV, tv%eqn_of_state, US, dpa, intz_dpa, intx_dpa, inty_dpa, &
+                       useMassWghtInterp=CS%useMassWghtInterp)
+           endif
         endif
       else
         call int_density_dz(tv_tmp%T(:,:,k), tv_tmp%S(:,:,k), e(:,:,K), e(:,:,K+1), &

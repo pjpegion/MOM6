@@ -294,10 +294,6 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, Time_local, dt, forces, p_s
   real, dimension(SZIB_(G),SZJ_(G),SZK_(G)) :: up   ! Predicted zonal velocity [L T-1 ~> m s-1].
   real, dimension(SZI_(G),SZJB_(G),SZK_(G)) :: vp   ! Predicted meridional velocity [L T-1 ~> m s-1].
   real, dimension(SZI_(G),SZJ_(G),SZK_(G))  :: hp   ! Predicted thickness [H ~> m or kg m-2].
-  real, dimension(SZI_(G),SZJ_(G)) :: &
-    rp_out      ! sea surface height, which may be based on eta_av [m]
-  real, dimension(SZI_(G),SZJ_(G)) :: &
-    phi_out      ! sea surface height, which may be based on eta_av [m]
 
   real, dimension(SZIB_(G),SZJ_(G),SZK_(G)) :: u_bc_accel
   real, dimension(SZI_(G),SZJB_(G),SZK_(G)) :: v_bc_accel
@@ -375,12 +371,6 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, Time_local, dt, forces, p_s
   enddo
   if (CS%use_stoch_eos) then
      call MOM_stoch_eos_run(G,u,v,CS%stoch_eos_pattern,CS%stoch_phi_pattern,dt)
-     do j=js,je ; do i=is,ie
-        rp_out(i,j) = CS%stoch_eos_pattern(i,j)
-        phi_out(i,j) = CS%stoch_phi_pattern(i,j)
-     enddo ; enddo
-     if (CS%id_stoch_eos > 0) call post_data(CS%id_stoch_eos, rp_out, CS%diag, mask=G%mask2dT)
-     if (CS%id_stoch_phi > 0) call post_data(CS%id_stoch_phi, phi_out, CS%diag, mask=G%mask2dT)
   endif
 
   ! Update CFL truncation value as function of time
@@ -447,8 +437,13 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, Time_local, dt, forces, p_s
 ! pbce = dM/deta
   if (CS%begw == 0.0) call enable_averages(dt, Time_local, CS%diag)
   call cpu_clock_begin(id_clock_pres)
-  call PressureForce(h, tv, CS%PFu, CS%PFv, G, GV, US, CS%PressureForce_CSp, &
-                     CS%ALE_CSp, p_surf, CS%pbce, CS%eta_PF)
+  if (CS%use_stoch_eos) then
+     call PressureForce(h, tv, CS%PFu, CS%PFv, G, GV, US, CS%PressureForce_CSp, &
+                        CS%ALE_CSp, p_surf, CS%pbce, CS%eta_PF,CS%stoch_eos_pattern)
+  else
+     call PressureForce(h, tv, CS%PFu, CS%PFv, G, GV, US, CS%PressureForce_CSp, &
+                        CS%ALE_CSp, p_surf, CS%pbce, CS%eta_PF)
+  endif
   if (dyn_p_surf) then
     pres_to_eta = 1.0 / (GV%g_Earth * GV%H_to_RZ)
     !$OMP parallel do default(shared)
@@ -692,8 +687,13 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, Time_local, dt, forces, p_s
     ! PFu = d/dx M(hp,T,S)
     ! pbce = dM/deta
     call cpu_clock_begin(id_clock_pres)
-    call PressureForce(hp, tv, CS%PFu, CS%PFv, G, GV, US, CS%PressureForce_CSp, &
-                       CS%ALE_CSp, p_surf, CS%pbce, CS%eta_PF)
+    if (CS%use_stoch_eos) then
+       call PressureForce(hp, tv, CS%PFu, CS%PFv, G, GV, US, CS%PressureForce_CSp, &
+                          CS%ALE_CSp, p_surf, CS%pbce, CS%eta_PF,CS%stoch_eos_pattern)
+     else
+       call PressureForce(hp, tv, CS%PFu, CS%PFv, G, GV, US, CS%PressureForce_CSp, &
+                          CS%ALE_CSp, p_surf, CS%pbce, CS%eta_PF)
+     endif
     call cpu_clock_end(id_clock_pres)
     if (showCallTree) call callTree_wayPoint("done with PressureForce[hp=(1-b).h+b.h] (step_MOM_dyn_split_RK2)")
   endif
@@ -886,6 +886,8 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, Time_local, dt, forces, p_s
 
   !  Here various terms used in to update the momentum equations are
   !  offered for time averaging.
+  if (CS%id_stoch_eos > 0) call post_data(CS%id_stoch_eos, CS%stoch_eos_pattern, CS%diag)!, mask=G%mask2dT)
+  if (CS%id_stoch_phi > 0) call post_data(CS%id_stoch_phi, CS%stoch_phi_pattern, CS%diag)!, mask=G%mask2dT)
   if (CS%id_PFu > 0) call post_data(CS%id_PFu, CS%PFu, CS%diag)
   if (CS%id_PFv > 0) call post_data(CS%id_PFv, CS%PFv, CS%diag)
   if (CS%id_CAu > 0) call post_data(CS%id_CAu, CS%CAu, CS%diag)
