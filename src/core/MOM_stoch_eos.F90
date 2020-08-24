@@ -63,19 +63,11 @@ contains
   npts=(G%Domain%niglobal+G%Domain%nihalo*2)*(G%Domain%njglobal+G%Domain%njhalo*2)
   ! fill array with approximation of grid area needed for decorrelation
   ! time-scale calculation
-  if (global_index_logic) then
-     do j=G%jsd,G%jed
-        do i=G%isd,G%ied
-           l2_inv(i,j)=1.0/(G%dxT(i,j)**2+G%dyT(i,j)**2)
-        enddo
+  do j=G%jsd,G%jed
+     do i=G%isd,G%ied
+        l2_inv(i,j)=1.0/(G%dxT(i,j)**2+G%dyT(i,j)**2)
      enddo
-  else
-     do j=G%jsd,G%jed
-        do i=G%isd,G%ied
-           l2_inv(i,j)=1.0/(G%dxT(i,j)**2+G%dyT(i,j)**2)
-        enddo
-     enddo
-  endif
+  enddo
 
   
   end subroutine MOM_stoch_eos_init
