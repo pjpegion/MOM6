@@ -16,7 +16,7 @@ real, allocatable, private :: l2_inv(:,:)
 real, allocatable, private :: rgauss(:,:)
 logical                    :: global_index_logic,first_time
 real, parameter,private :: tfac=0.27
-real, parameter,private :: amplitude=0.39
+real, parameter,private :: amplitude=0.624499 !0.39 is variance
 type(randomNumberStream)  ::  rns
 integer(8) :: npts
 real :: pi
