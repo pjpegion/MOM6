@@ -254,12 +254,13 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, forces, &
   up(:,:,:) = 0; upp(:,:,:) = 0
   vp(:,:,:) = 0; vpp(:,:,:) = 0
 
-  if (CS%use_stoch_eos) then
-     call MOM_stoch_eos_run(G,u,v,CS%stoch_eos_pattern,CS%stoch_phi_pattern,dt)
+  if (CS%use_stoch_eos) then 
+     call MOM_stoch_eos_run(G,u,v,CS%stoch_eos_pattern,CS%stoch_phi_pattern,dt) ! advance random pattern
      do j=js,je ; do i=is,ie
-        rp_out(i,j) = CS%stoch_eos_pattern(i,j)
+        rp_out(i,j) = CS%stoch_eos_pattern(i,j)    ! save field for diagnoistics
         phi_out(i,j) = CS%stoch_phi_pattern(i,j)
      enddo ; enddo
+     ! write out pattern and auto-correlation
      if (CS%id_stoch_eos > 0) call post_data(CS%id_stoch_eos, rp_out, CS%diag, mask=G%mask2dT)
      if (CS%id_stoch_phi > 0) call post_data(CS%id_stoch_phi, phi_out, CS%diag, mask=G%mask2dT)
   endif

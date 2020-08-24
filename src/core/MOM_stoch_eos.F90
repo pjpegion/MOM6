@@ -23,6 +23,7 @@ real :: pi
 
 contains
   subroutine MOM_stoch_eos_init(G,param_file,global_indexing)
+! initialization subroutine called my MOM.F90,
   type(param_file_type),   intent(in)   :: param_file  !< structure indicating parameter file to parse
   type(ocean_grid_type),   intent(in) :: G
   logical,                 intent(in)  :: global_indexing
@@ -35,8 +36,6 @@ contains
   pi=2*acos(0.0)
   allocate(l2_inv(G%isd:G%ied,G%jsd:G%jed)) ! currently allocating for data domain, should I which to compute domain?
   allocate(rgauss(1-G%Domain%nihalo:G%Domain%niglobal+G%Domain%nihalo,1-G%Domain%njhalo:G%Domain%njglobal+G%Domain%njhalo))
-  !print*,'allocating rgauss',1-G%Domain%nihalo,G%Domain%niglobal+G%Domain%nihalo,1-G%Domain%njhalo,G%Domain%njglobal+G%Domain%njhalo
-  !print*,'local offset',G%idg_offset,G%jdg_offset
   global_index_logic=global_indexing
   first_time=.true.
   call get_param(param_file, "MOM", "SEED_STOCH_EOS", seed, &
@@ -61,9 +60,9 @@ contains
   endif
   call mpp_broadcast(count4, root_PE())
   rns=initializeRandomNumberStream(count4)
-  !npts=(G%isd_global+1)*(G%jsd_global+1)
   npts=(G%Domain%niglobal+G%Domain%nihalo*2)*(G%Domain%njglobal+G%Domain%njhalo*2)
-  ! fill array with approximation of grid area
+  ! fill array with approximation of grid area needed for decorrelation
+  ! time-scale calculation
   if (global_index_logic) then
      do j=G%jsd,G%jed
         do i=G%isd,G%ied
@@ -83,25 +82,24 @@ contains
 
   subroutine MOM_stoch_eos_run(G,u,v,random_pattern,phi_out,delt)
   type(ocean_grid_type),   intent(in)    :: G
-  real,                    intent(in)    :: u(:,:,:)
-  real,                    intent(in)    :: v(:,:,:)
-  real,                    intent(inout) :: random_pattern(:,:)
-  real,                    intent(inout) :: phi_out(:,:)
+  real,                    intent(in)    :: u(:,:,:)  ! zonal current
+  real,                    intent(in)    :: v(:,:,:)  ! meridional current
+  real,                    intent(inout) :: random_pattern(:,:)  
+  real,                    intent(inout) :: phi_out(:,:)     ! autocorrelation output for diagnoistic purposes
   real,                    intent(in)    :: delt 
 ! locals
   integer                                ::  i,j
   real                                   :: phi,ubar,vbar
 
-  call random_gauss(rns,rgauss)
-  !print*,'in stoch_run',first_time
+  call random_gauss(rns,rgauss)  ! get random white noise on global grid so each PE is marching through the same random sequence for reproducibility
   if (global_index_logic) then
-     if (first_time) then
+     if (first_time) then  ! populate pattern with random white noise
         do j=G%jsd,G%jed
            do i=G%isd,G%ied
               random_pattern(i,j)=amplitude*rgauss(i,j)
            enddo
         enddo
-     else
+     else  ! advance AR(1)
         do j=G%jsd,G%jed
            do i=G%isd,G%ied
               ubar=0.5*(u(i,j,1)+u(i+1,j,1))
@@ -113,13 +111,13 @@ contains
         enddo
      endif
   else  
-     if (first_time) then
+     if (first_time) then ! populate pattern with random white noise
         do j=G%jsd,G%jed
            do i=G%isd,G%ied
               random_pattern(i,j)=amplitude*rgauss(i+G%idg_offset,j+G%jdg_offset)
            enddo
         enddo
-     else
+     else  ! advance AR(1)
         do j=G%jsd,G%jed
            do i=G%isd,G%ied
               ubar=0.5*(u(i,j,1)+u(i+1,j,1))

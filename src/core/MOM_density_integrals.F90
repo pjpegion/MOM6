@@ -801,7 +801,7 @@ subroutine int_density_dz_generic_ppm(k, tv, T_t, T_b, S_t, S_b, e, &
       if (use_varT) T25(:) = tv%varT(i,j,k)
       if (use_covarTS) TS5(:) = tv%covarTS(i,j,k)
       if (use_varS) S25(:) = tv%varS(i,j,k)
-      if (present(stoch_eos_pattern)) T25(:) = exp(stoch_eos_pattern(i,j))*T25(:)
+      if (present(stoch_eos_pattern)) T25(:) = exp(stoch_eos_pattern(i,j))*T25(:)  ! adjust the temperature variance calculation
       call calculate_density(T5, S5, p5, T25, TS5, S25, r5, &
                              1, 5, EOS, rho_ref=rho_ref_mks, scale=rho_scale)
     else
