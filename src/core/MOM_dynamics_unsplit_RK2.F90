@@ -112,7 +112,7 @@ type, public :: MOM_dyn_unsplit_RK2_CS ; private
     CAv, &    !< CAv = -f*u - u.grad(v) [L T-2 ~> m s-2].
     PFv, &    !< PFv = -dM/dy [L T-2 ~> m s-2].
     diffv     !< Meridional acceleration due to convergence of the along-isopycnal stress tensor [L T-2 ~> m s-2].
-  real ALLOCABLE_, dimension(NIMEM_,NJMEM_) :: stoch_eos_pattern
+  real,public ALLOCABLE_, dimension(NIMEM_,NJMEM_) :: stoch_eos_pattern
                     !< Random pattern for stochastic EOS
   real ALLOCABLE_, dimension(NIMEM_,NJMEM_) :: stoch_phi_pattern
                     !< temporal correlation stochastic EOS (deugging)

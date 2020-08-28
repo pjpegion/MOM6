@@ -2335,9 +2335,6 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, restart_CSp, &
   call copy_dyngrid_to_MOM_grid(dG_in, G_in, US)
   call destroy_dyn_horgrid(dG_in)
 
-  if (CS%use_stoch_eos) then 
-     call MOM_stoch_eos_init(G,param_file,global_indexing)
-  endif
 
   ! Set a few remaining fields that are specific to the ocean grid type.
   call set_first_direction(G, first_direction)
@@ -2551,6 +2548,7 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, restart_CSp, &
   call set_visc_init(Time, G, GV, US, param_file, diag, CS%visc, CS%set_visc_CSp, restart_CSp, CS%OBC)
   call thickness_diffuse_init(Time, G, GV, US, param_file, diag, CS%CDp, CS%thickness_diffuse_CSp)
 
+  new_sim = is_new_run(restart_CSp)
   if (CS%split) then
     allocate(eta(SZI_(G),SZJ_(G))) ; eta(:,:) = 0.0
     call initialize_dyn_split_RK2(CS%u, CS%v, CS%h, CS%uh, CS%vh, eta, Time, &
@@ -2559,6 +2557,9 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, restart_CSp, &
               CS%thickness_diffuse_CSp,                                      &
               CS%OBC, CS%update_OBC_CSp, CS%ALE_CSp, CS%set_visc_CSp,        &
               CS%visc, dirs, CS%ntrunc, calc_dtbt=calc_dtbt, cont_stencil=CS%cont_stencil)
+     if (CS%use_stoch_eos) then 
+        call MOM_stoch_eos_init(G,Time,param_file,CS%dyn_split_RK2_CSp%stoch_eos_pattern,new_sim)
+     endif
     if (CS%dtbt_reset_period > 0.0) then
       CS%dtbt_reset_interval = real_to_time(CS%dtbt_reset_period)
       ! Set dtbt_reset_time to be the next even multiple of dtbt_reset_interval.
@@ -2577,12 +2578,18 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, restart_CSp, &
             CS%ADp, CS%CDp, MOM_internal_state, CS%MEKE, CS%OBC,           &
             CS%update_OBC_CSp, CS%ALE_CSp, CS%set_visc_CSp, CS%visc, dirs, &
             CS%ntrunc, cont_stencil=CS%cont_stencil)
+     if (CS%use_stoch_eos) then 
+        call MOM_stoch_eos_init(G,Time,param_file,CS%dyn_unsplit_RK2_CSp%stoch_eos_pattern,new_sim)
+     endif
   else
     call initialize_dyn_unsplit(CS%u, CS%v, CS%h, Time, G, GV, US,         &
             param_file, diag, CS%dyn_unsplit_CSp, restart_CSp,             &
             CS%ADp, CS%CDp, MOM_internal_state, CS%MEKE, CS%OBC,           &
             CS%update_OBC_CSp, CS%ALE_CSp, CS%set_visc_CSp, CS%visc, dirs, &
             CS%ntrunc, cont_stencil=CS%cont_stencil)
+     if (CS%use_stoch_eos) then 
+        call MOM_stoch_eos_init(G,Time,param_file,CS%dyn_unsplit_CSp%stoch_eos_pattern,new_sim)
+     endif
   endif
 
   call callTree_waypoint("dynamics initialized (initialize_MOM)")
@@ -2634,7 +2641,6 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, restart_CSp, &
   endif
 
   ! This subroutine initializes any tracer packages.
-  new_sim = is_new_run(restart_CSp)
   call tracer_flow_control_init(.not.new_sim, Time, G, GV, US, CS%h, param_file, &
              CS%diag, CS%OBC, CS%tracer_flow_CSp, CS%sponge_CSp, &
              CS%ALE_sponge_CSp, CS%tv)

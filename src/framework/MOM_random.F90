@@ -118,11 +118,12 @@ subroutine random_2d_constructor(CS, HI, Time, seed)
   type(time_type),      intent(in)    :: Time !< Current model time
   integer,              intent(in)    :: seed !< Seed for PRNG
   ! Local variables
-  integer :: i,j,sseed,tseed
+  integer :: i,j,sseed,tseed,tseed0
 
   if (.not. allocated(CS%stream2d)) allocate( CS%stream2d(HI%isd:HI%ied,HI%jsd:HI%jed) )
 
   tseed = seed_from_time(Time)
+  tseed0=tseed 
   tseed = ieor(tseed*9007, seed)
   do j = HI%jsd,HI%jed
     do i = HI%isd,HI%ied

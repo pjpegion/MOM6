@@ -100,7 +100,7 @@ type, public :: MOM_dyn_split_RK2_CS ; private
               !< The meridional layer accelerations due to the difference between
               !! the barotropic accelerations and the baroclinic accelerations
               !! that were fed into the barotopic calculation [L T-2 ~> m s-2]
-  real ALLOCABLE_, dimension(NIMEM_,NJMEM_) :: stoch_eos_pattern
+  real,public ALLOCABLE_, dimension(NIMEM_,NJMEM_) :: stoch_eos_pattern
                     !< Random pattern for stochastic EOS
   real ALLOCABLE_, dimension(NIMEM_,NJMEM_) :: stoch_phi_pattern
                     !< temporal correlation stochastic EOS (deugging)
@@ -1085,6 +1085,12 @@ subroutine register_restarts_dyn_split_RK2(HI, GV, param_file, CS, restart_CS, u
 
   call register_barotropic_restarts(HI, GV, param_file, CS%barotropic_CSp, &
                                     restart_CS)
+  vd(1) = var_desc("stoch_eos_pattern","nondim","Random pattern for stoch EOS",'h','1')
+  call get_param(param_file, "MOM", "STOCH_EOS", CS%use_stoch_eos, &
+                 "If true, stochastic perturbations are applied "//&
+                 "to the EOS.", default=.false.)
+  if (CS%use_stoch_eos) ALLOC_(CS%stoch_eos_pattern(isd:ied,jsd:jed)) ; CS%stoch_eos_pattern(:,:) = 0.0
+  call register_restart_field(CS%stoch_eos_pattern, vd(1), .false., restart_CS)
 
 end subroutine register_restarts_dyn_split_RK2
 
@@ -1206,13 +1212,9 @@ subroutine initialize_dyn_split_RK2(u, v, h, uh, vh, eta, Time, G, GV, US, param
   call get_param(param_file, mdl, "DEBUG_OBC", CS%debug_OBC, default=.false.)
   call get_param(param_file, mdl, "DEBUG_TRUNCATIONS", debug_truncations, &
                  default=.false.)
-  call get_param(param_file, "MOM", "STOCH_EOS", CS%use_stoch_eos, &
-                 "If true, stochastic perturbations are applied "//&
-                 "to the EOS.", default=.false.)
 
   allocate(CS%taux_bot(IsdB:IedB,jsd:jed)) ; CS%taux_bot(:,:) = 0.0
   allocate(CS%tauy_bot(isd:ied,JsdB:JedB)) ; CS%tauy_bot(:,:) = 0.0
-  if (CS%use_stoch_eos) ALLOC_(CS%stoch_eos_pattern(isd:ied,jsd:jed)) ; CS%stoch_eos_pattern(:,:) = 0.0
   if (CS%use_stoch_eos) ALLOC_(CS%stoch_phi_pattern(isd:ied,jsd:jed)) ; CS%stoch_phi_pattern(:,:) = 0.0
 
   ALLOC_(CS%uhbt(IsdB:IedB,jsd:jed))          ; CS%uhbt(:,:)         = 0.0
