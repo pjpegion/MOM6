@@ -255,7 +255,7 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, forces, &
   vp(:,:,:) = 0; vpp(:,:,:) = 0
 
   if (CS%use_stoch_eos) then 
-     call MOM_stoch_eos_run(G,u,v,CS%stoch_eos_pattern,CS%stoch_phi_pattern,dt) ! advance random pattern
+     call MOM_stoch_eos_run(G,u,v,CS%stoch_eos_pattern,CS%stoch_phi_pattern,dt,Time_local) ! advance random pattern
      do j=js,je ; do i=is,ie
         rp_out(i,j) = CS%stoch_eos_pattern(i,j)    ! save field for diagnoistics
         phi_out(i,j) = CS%stoch_phi_pattern(i,j)

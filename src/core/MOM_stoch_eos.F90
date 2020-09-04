@@ -17,6 +17,7 @@ real, allocatable, private :: l2_inv(:,:)
 real, allocatable, private :: rgauss(:,:)
 real, parameter,private :: tfac=0.27
 real, parameter,private :: amplitude=0.624499 !0.39 is variance
+integer        ,private :: seed
 type(PRNG)  ::  CS
 !integer(8) :: npts
 !real :: pi
@@ -30,7 +31,7 @@ contains
   type(time_type),       intent(in)    :: Time
   real,                  intent(inout) :: random_pattern(:,:)
   logical,               intent(in)    :: new_run
-  integer :: i,j,seed
+  integer :: i,j
   seed=0
   ! contants
   !pi=2*acos(0.0)
@@ -58,17 +59,20 @@ contains
   
   end subroutine MOM_stoch_eos_init
 
-  subroutine MOM_stoch_eos_run(G,u,v,random_pattern,phi_out,delt)
+  subroutine MOM_stoch_eos_run(G,u,v,random_pattern,phi_out,delt,Time)
   type(ocean_grid_type), intent(in)    :: G
   real,                  intent(in)    :: u(:,:,:)  ! zonal current
   real,                  intent(in)    :: v(:,:,:)  ! meridional current
   real,                  intent(inout) :: random_pattern(:,:)  
   real,                  intent(inout) :: phi_out(:,:)     ! autocorrelation output for diagnoistic purposes
   real,                  intent(in)    :: delt 
+  type(time_type),       intent(in)    :: Time
 ! locals
   integer                                ::  i,j
+  integer :: yr,mo,dy,hr,mn,sc
   real                                   :: phi,ubar,vbar
 
+  call random_2d_constructor(CS, G%HI, Time, seed)
   call random_2d_norm(CS, G%HI, rgauss)
   ! advance AR(1)
   do j=G%jsd,G%jed

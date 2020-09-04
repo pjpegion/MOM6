@@ -370,7 +370,7 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, Time_local, dt, forces, p_s
     do j=G%jsd,G%jed   ; do i=G%isd,G%ied   ;  hp(i,j,k) = h(i,j,k) ; enddo ; enddo
   enddo
   if (CS%use_stoch_eos) then
-     call MOM_stoch_eos_run(G,u,v,CS%stoch_eos_pattern,CS%stoch_phi_pattern,dt)
+     call MOM_stoch_eos_run(G,u,v,CS%stoch_eos_pattern,CS%stoch_phi_pattern,dt,Time_local)
   endif
 
   ! Update CFL truncation value as function of time

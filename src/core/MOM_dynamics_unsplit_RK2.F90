@@ -264,7 +264,7 @@ subroutine step_MOM_dyn_unsplit_RK2(u_in, v_in, h_in, tv, visc, Time_local, dt, 
   up(:,:,:) = 0
   vp(:,:,:) = 0
   if (CS%use_stoch_eos) then
-     call MOM_stoch_eos_run(G,u_in,v_in,CS%stoch_eos_pattern,CS%stoch_phi_pattern,dt)
+     call MOM_stoch_eos_run(G,u_in,v_in,CS%stoch_eos_pattern,CS%stoch_phi_pattern,dt,Time_local)
      do j=js,je ; do i=is,ie
         rp_out(i,j) = CS%stoch_eos_pattern(i,j)
         phi_out(i,j) = CS%stoch_phi_pattern(i,j)
