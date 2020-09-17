@@ -62,6 +62,7 @@ public update_segment_tracer_reservoirs
 public update_OBC_ramp
 public rotate_OBC_config
 public rotate_OBC_init
+public initialize_segment_data
 
 integer, parameter, public :: OBC_NONE = 0      !< Indicates the use of no open boundary
 integer, parameter, public :: OBC_SIMPLE = 1    !< Indicates the use of a simple inflow open boundary
@@ -268,7 +269,7 @@ type, public :: ocean_OBC_type
   real :: rx_max   !< The maximum magnitude of the baroclinic radiation velocity (or speed of
                    !! characteristics) in units of grid points per timestep [nondim].
   logical :: OBC_pe !< Is there an open boundary on this tile?
-  type(remapping_CS),      pointer :: remap_CS   !< ALE remapping control structure for segments only
+  type(remapping_CS),      pointer :: remap_CS=> NULL()   !< ALE remapping control structure for segments only
   type(OBC_registry_type), pointer :: OBC_Reg => NULL()  !< Registry type for boundaries
   real, pointer, dimension(:,:,:) :: &
     rx_normal => NULL(), & !< Array storage for normal phase speed for EW radiation OBCs in units of
@@ -341,6 +342,11 @@ subroutine open_boundary_config(G, US, param_file, OBC)
   character(len=100) :: segment_str      ! The contents (rhs) for parameter "segment_param_str"
   character(len=200) :: config1          ! String for OBC_USER_CONFIG
   real               :: Lscale_in, Lscale_out ! parameters controlling tracer values at the boundaries [L ~> m]
+  character(len=128) :: inputdir
+  logical :: answers_2018, default_2018_answers
+  logical :: check_reconstruction, check_remapping, force_bounds_in_subcell
+  character(len=32)  :: remappingScheme
+
   allocate(OBC)
 
   call get_param(param_file, mdl, "OBC_NUMBER_OF_SEGMENTS", OBC%number_of_segments, &
@@ -497,7 +503,7 @@ subroutine open_boundary_config(G, US, param_file, OBC)
     enddo
 
     !    if (open_boundary_query(OBC, needs_ext_seg_data=.true.)) &
-    call initialize_segment_data(G, OBC, param_file)
+ !   call initialize_segment_data(G, OBC, param_file)
 
     if (open_boundary_query(OBC, apply_open_OBC=.true.)) then
       call get_param(param_file, mdl, "OBC_RADIATION_MAX", OBC%rx_max, &
@@ -540,6 +546,39 @@ subroutine open_boundary_config(G, US, param_file, OBC)
       if (Lscale_out>0.) OBC%segment(l)%Tr_InvLscale_out =  1.0/Lscale_out
     enddo
 
+    call get_param(param_file, mdl, "REMAPPING_SCHEME", remappingScheme, &
+          "This sets the reconstruction scheme used "//&
+          "for vertical remapping for all variables. "//&
+          "It can be one of the following schemes: \n"//&
+          trim(remappingSchemesDoc), default=remappingDefaultScheme,do_not_log=.true.)
+    call get_param(param_file, mdl, "FATAL_CHECK_RECONSTRUCTIONS", check_reconstruction, &
+          "If true, cell-by-cell reconstructions are checked for "//&
+          "consistency and if non-monotonicity or an inconsistency is "//&
+          "detected then a FATAL error is issued.", default=.false.,do_not_log=.true.)
+    call get_param(param_file, mdl, "FATAL_CHECK_REMAPPING", check_remapping, &
+          "If true, the results of remapping are checked for "//&
+          "conservation and new extrema and if an inconsistency is "//&
+          "detected then a FATAL error is issued.", default=.false.,do_not_log=.true.)
+    call get_param(param_file, mdl, "BRUSHCUTTER_MODE", OBC%brushcutter_mode, &
+         "If true, read external OBC data on the supergrid.", &
+         default=.false.)
+    call get_param(param_file, mdl, "REMAP_BOUND_INTERMEDIATE_VALUES", force_bounds_in_subcell, &
+          "If true, the values on the intermediate grid used for remapping "//&
+          "are forced to be bounded, which might not be the case due to "//&
+          "round off.", default=.false.,do_not_log=.true.)
+    call get_param(param_file, mdl, "DEFAULT_2018_ANSWERS", default_2018_answers, &
+                 "This sets the default value for the various _2018_ANSWERS parameters.", &
+                 default=.false.)
+    call get_param(param_file, mdl, "REMAPPING_2018_ANSWERS", answers_2018, &
+                 "If true, use the order of arithmetic and expressions that recover the "//&
+                 "answers from the end of 2018.  Otherwise, use updated and more robust "//&
+                 "forms of the same expressions.", default=default_2018_answers)
+
+    allocate(OBC%remap_CS)
+    call initialize_remapping(OBC%remap_CS, remappingScheme, boundary_extrapolation = .false., &
+               check_reconstruction=check_reconstruction, check_remapping=check_remapping, &
+               force_bounds_in_subcell=force_bounds_in_subcell, answers_2018=answers_2018)
+
   endif ! OBC%number_of_segments > 0
 
     ! Safety check
@@ -564,7 +603,7 @@ end subroutine open_boundary_config
 subroutine initialize_segment_data(G, OBC, PF)
   use mpp_mod, only : mpp_pe, mpp_set_current_pelist, mpp_get_current_pelist,mpp_npes
 
-  type(dyn_horgrid_type), intent(in)    :: G   !< Ocean grid structure
+  type(ocean_grid_type), intent(in)    :: G   !< Ocean grid structure
   type(ocean_OBC_type),   intent(inout) :: OBC !< Open boundary control structure
   type(param_file_type),  intent(in)    :: PF  !< Parameter file handle
 
@@ -576,10 +615,7 @@ subroutine initialize_segment_data(G, OBC, PF)
   character(len=32), dimension(MAX_OBC_FIELDS) :: fields  ! segment field names
   character(len=128) :: inputdir
   type(OBC_segment_type), pointer :: segment => NULL() ! pointer to segment type list
-  character(len=32)  :: remappingScheme
   character(len=256) :: mesg    ! Message for error messages.
-  logical :: check_reconstruction, check_remapping, force_bounds_in_subcell
-  logical :: answers_2018, default_2018_answers
   integer, dimension(4) :: siz,siz2
   integer :: is, ie, js, je
   integer :: isd, ied, jsd, jed
@@ -598,39 +634,6 @@ subroutine initialize_segment_data(G, OBC, PF)
 
   call get_param(PF, mdl, "INPUTDIR", inputdir, default=".")
   inputdir = slasher(inputdir)
-
-  call get_param(PF, mdl, "REMAPPING_SCHEME", remappingScheme, &
-          "This sets the reconstruction scheme used "//&
-          "for vertical remapping for all variables. "//&
-          "It can be one of the following schemes: \n"//&
-          trim(remappingSchemesDoc), default=remappingDefaultScheme,do_not_log=.true.)
-  call get_param(PF, mdl, "FATAL_CHECK_RECONSTRUCTIONS", check_reconstruction, &
-          "If true, cell-by-cell reconstructions are checked for "//&
-          "consistency and if non-monotonicity or an inconsistency is "//&
-          "detected then a FATAL error is issued.", default=.false.,do_not_log=.true.)
-  call get_param(PF, mdl, "FATAL_CHECK_REMAPPING", check_remapping, &
-          "If true, the results of remapping are checked for "//&
-          "conservation and new extrema and if an inconsistency is "//&
-          "detected then a FATAL error is issued.", default=.false.,do_not_log=.true.)
-  call get_param(PF, mdl, "REMAP_BOUND_INTERMEDIATE_VALUES", force_bounds_in_subcell, &
-          "If true, the values on the intermediate grid used for remapping "//&
-          "are forced to be bounded, which might not be the case due to "//&
-          "round off.", default=.false.,do_not_log=.true.)
-  call get_param(PF, mdl, "BRUSHCUTTER_MODE", OBC%brushcutter_mode, &
-         "If true, read external OBC data on the supergrid.", &
-         default=.false.)
-  call get_param(PF, mdl, "DEFAULT_2018_ANSWERS", default_2018_answers, &
-                 "This sets the default value for the various _2018_ANSWERS parameters.", &
-                 default=.false.)
-  call get_param(PF, mdl, "REMAPPING_2018_ANSWERS", answers_2018, &
-                 "If true, use the order of arithmetic and expressions that recover the "//&
-                 "answers from the end of 2018.  Otherwise, use updated and more robust "//&
-                 "forms of the same expressions.", default=default_2018_answers)
-
-  allocate(OBC%remap_CS)
-  call initialize_remapping(OBC%remap_CS, remappingScheme, boundary_extrapolation = .false., &
-               check_reconstruction=check_reconstruction, check_remapping=check_remapping, &
-               force_bounds_in_subcell=force_bounds_in_subcell, answers_2018=answers_2018)
 
   if (OBC%user_BCs_set_globally) return
 
@@ -666,7 +669,7 @@ subroutine initialize_segment_data(G, OBC, PF)
       call MOM_error(FATAL, mesg)
     endif
 
-    call parse_segment_data_str(trim(segstr), fields=fields, num_fields=num_fields)
+    call parse_segment_manifest_str(trim(segstr), num_fields, fields)
     if (num_fields == 0) then
       call MOM_mesg('initialize_segment_data: num_fields = 0')
       cycle ! cycle to next segment
@@ -687,7 +690,8 @@ subroutine initialize_segment_data(G, OBC, PF)
     JsdB = segment%HI%JsdB ; JedB = segment%HI%JedB
 
     do m=1,num_fields
-      call parse_segment_data_str(trim(segstr), var=trim(fields(m)), value=value, filenam=filename, fieldnam=fieldname)
+      call parse_segment_data_str(trim(segstr), m, trim(fields(m)), &
+          value, filename, fieldname)
       if (trim(filename) /= 'none') then
         OBC%update_OBC = .true. ! Data is assumed to be time-dependent if we are reading from file
         OBC%needs_IO_for_data = .true. ! At least one segment is using I/O for OBC data
@@ -1341,92 +1345,73 @@ subroutine parse_segment_str(ni_global, nj_global, segment_str, l, m, n, action_
   end function interpret_int_expr
 end subroutine parse_segment_str
 
+
+!> Parse an OBC_SEGMENT_%%%_DATA string and determine its fields
+subroutine parse_segment_manifest_str(segment_str, num_fields, fields)
+  character(len=*), intent(in) :: segment_str   !< A string in form of
+                                        !< "VAR1=file:foo1.nc(varnam1),VAR2=file:foo2.nc(varnam2),..."
+  integer, intent(out) :: num_fields    !< The number of fields in the segment data
+  character(len=*), dimension(MAX_OBC_FIELDS), intent(out) :: fields
+                                        !< List of fieldnames for each segment
+
+  ! Local variables
+  character(len=128) :: word1, word2
+
+  num_fields = 0
+  do
+    word1 = extract_word(segment_str, ',', num_fields+1)
+    if (trim(word1) == '') exit
+    num_fields = num_fields + 1
+    word2 = extract_word(word1, '=', 1)
+    fields(num_fields) = trim(word2)
+  enddo
+end subroutine parse_segment_manifest_str
+
+
 !> Parse an OBC_SEGMENT_%%%_DATA string
- subroutine parse_segment_data_str(segment_str, var, value, filenam, fieldnam, fields, num_fields, debug )
-   character(len=*),           intent(in)   :: segment_str !< A string in form of
-                                                          !! "VAR1=file:foo1.nc(varnam1),VAR2=file:foo2.nc(varnam2),..."
-   character(len=*), optional, intent(in)   :: var        !< The name of the variable for which parameters are needed
-   character(len=*), optional, intent(out)  :: filenam    !< The name of the input file if using "file" method
-   character(len=*), optional, intent(out)  :: fieldnam   !< The name of the variable in the input file if using
-                                                          !! "file" method
-   real,             optional, intent(out)  :: value      !< A constant value if using the "value" method
-   character(len=*), dimension(MAX_OBC_FIELDS), &
-                     optional, intent(out)  :: fields     !< List of fieldnames for each segment
-   integer, optional, intent(out)           :: num_fields !< The number of fields in the segment data
-   logical, optional, intent(in)            :: debug      !< If present and true, write verbose debugging messages
-   ! Local variables
-   character(len=128) :: word1, word2, word3, method
-   integer :: lword, nfields, n, m
-   logical :: continue,dbg
-   character(len=32), dimension(MAX_OBC_FIELDS) :: flds
+subroutine parse_segment_data_str(segment_str, idx, var, value, filename, fieldname)
+  character(len=*), intent(in) :: segment_str   !< A string in form of
+      !! "VAR1=file:foo1.nc(varnam1),VAR2=file:foo2.nc(varnam2),..."
+  integer, intent(in) :: idx                    !< Index of segment_str record
+  character(len=*), intent(in) :: var           !< The name of the variable for which parameters are needed
+  character(len=*), intent(out) :: filename     !< The name of the input file if using "file" method
+  character(len=*), intent(out) :: fieldname    !< The name of the variable in the input file if using
+                                                !! "file" method
+  real, optional, intent(out)  :: value         !< A constant value if using the "value" method
 
-   nfields=0
-   continue=.true.
-   dbg=.false.
-   if (PRESENT(debug)) dbg=debug
+  ! Local variables
+  character(len=128) :: word1, word2, word3, method
+  integer :: lword
 
-   do while (continue)
-      word1 = extract_word(segment_str,',',nfields+1)
-      if (trim(word1) == '') exit
-      nfields=nfields+1
-      word2 = extract_word(word1,'=',1)
-      flds(nfields) = trim(word2)
-   enddo
-
-   if (PRESENT(fields)) then
-     do n=1,nfields
-       fields(n) = flds(n)
-     enddo
-   endif
-
-   if (PRESENT(num_fields)) then
-      num_fields=nfields
-      return
-   endif
-
-   m=0
-   if (PRESENT(var)) then
-     do n=1,nfields
-       if (trim(var)==trim(flds(n))) then
-          m=n
-          exit
-       endif
-     enddo
-     if (m==0) then
-        call abort()
-     endif
-
-    ! Process first word which will start with the fieldname
-     word3 = extract_word(segment_str,',',m)
-     word1 = extract_word(word3,':',1)
-!     if (trim(word1) == '') exit
-     word2 = extract_word(word1,'=',1)
-     if (trim(word2) == trim(var)) then
-        method=trim(extract_word(word1,'=',2))
-        lword=len_trim(method)
-        if (method(lword-3:lword) == 'file') then
-           ! raise an error id filename/fieldname not in argument list
-           word1 = extract_word(word3,':',2)
-           filenam = extract_word(word1,'(',1)
-           fieldnam = extract_word(word1,'(',2)
-           lword=len_trim(fieldnam)
-           fieldnam = fieldnam(1:lword-1)  ! remove trailing parenth
-           value=-999.
-        elseif (method(lword-4:lword) == 'value') then
-           filenam = 'none'
-           fieldnam = 'none'
-           word1 = extract_word(word3,':',2)
-           lword=len_trim(word1)
-           read(word1(1:lword),*,end=986,err=987) value
-        endif
-      endif
+  ! Process first word which will start with the fieldname
+  word3 = extract_word(segment_str, ',', idx)
+  word1 = extract_word(word3, ':', 1)
+  !if (trim(word1) == '') exit
+  word2 = extract_word(word1, '=', 1)
+  if (trim(word2) == trim(var)) then
+    method = trim(extract_word(word1, '=', 2))
+    lword = len_trim(method)
+    if (method(lword-3:lword) == 'file') then
+      ! raise an error id filename/fieldname not in argument list
+      word1 = extract_word(word3, ':', 2)
+      filename = extract_word(word1, '(', 1)
+      fieldname = extract_word(word1, '(', 2)
+      lword = len_trim(fieldname)
+      fieldname = fieldname(1:lword-1)  ! remove trailing parenth
+      value = -999.
+    elseif (method(lword-4:lword) == 'value') then
+      filename = 'none'
+      fieldname = 'none'
+      word1 = extract_word(word3, ':', 2)
+      lword = len_trim(word1)
+      read(word1(1:lword), *, end=986, err=987) value
     endif
+  endif
 
-   return
- 986 call MOM_error(FATAL,'End of record while parsing segment data specification! '//trim(segment_str))
- 987 call MOM_error(FATAL,'Error while parsing segment data specification! '//trim(segment_str))
-
- end subroutine parse_segment_data_str
+  return
+986 call MOM_error(FATAL,'End of record while parsing segment data specification! '//trim(segment_str))
+987 call MOM_error(FATAL,'Error while parsing segment data specification! '//trim(segment_str))
+end subroutine parse_segment_data_str
 
 
 !> Parse all the OBC_SEGMENT_%%%_DATA strings again
@@ -1455,12 +1440,13 @@ end subroutine parse_segment_str
     call get_param(PF, mdl, segnam, segstr)
     if (segstr == '') cycle
 
-    call parse_segment_data_str(trim(segstr), fields=fields, num_fields=num_fields)
+    call parse_segment_manifest_str(trim(segstr), num_fields, fields)
     if (num_fields == 0) cycle
 
     ! At this point, just search for TEMP and SALT as tracers 1 and 2.
     do m=1,num_fields
-      call parse_segment_data_str(trim(segstr), var=trim(fields(m)), value=value, filenam=filename, fieldnam=fieldname)
+      call parse_segment_data_str(trim(segstr), m, trim(fields(m)), &
+          value, filename, fieldname)
       if (trim(filename) /= 'none') then
         if (fields(m) == 'TEMP') then
           if (segment%is_E_or_W_2) then
@@ -1602,9 +1588,17 @@ subroutine open_boundary_init(G, GV, US, param_file, OBC, restart_CSp)
   if (OBC%oblique_BCs_exist_globally) call pass_vector(OBC%rx_oblique, OBC%ry_oblique, G%Domain, &
                      To_All+Scalar_Pair)
   if (associated(OBC%cff_normal)) call pass_var(OBC%cff_normal, G%Domain, position=CORNER)
-  if (associated(OBC%tres_x) .or. associated(OBC%tres_y)) then
+  if (associated(OBC%tres_x) .and. associated(OBC%tres_y)) then
     do m=1,OBC%ntr
       call pass_vector(OBC%tres_x(:,:,:,m), OBC%tres_y(:,:,:,m), G%Domain, To_All+Scalar_Pair)
+    enddo
+  elseif (associated(OBC%tres_x)) then
+    do m=1,OBC%ntr
+      call pass_var(OBC%tres_x(:,:,:,m), G%Domain, position=EAST_FACE)
+    enddo
+  elseif (associated(OBC%tres_y)) then
+    do m=1,OBC%ntr
+      call pass_var(OBC%tres_y(:,:,:,m), G%Domain, position=NORTH_FACE)
     enddo
   endif
 
@@ -4731,8 +4725,7 @@ subroutine open_boundary_register_restarts(HI, GV, OBC, Reg, param_file, restart
   endif
 
   ! Still painfully inefficient, now in four dimensions.
-  ! Allocating both for now so that the pass_vector works.
-  if (any(OBC%tracer_x_reservoirs_used) .or. any(OBC%tracer_y_reservoirs_used)) then
+  if (any(OBC%tracer_x_reservoirs_used)) then
     allocate(OBC%tres_x(HI%isdB:HI%iedB,HI%jsd:HI%jed,GV%ke,OBC%ntr))
     OBC%tres_x(:,:,:,:) = 0.0
     do m=1,OBC%ntr
@@ -4748,8 +4741,8 @@ subroutine open_boundary_register_restarts(HI, GV, OBC, Reg, param_file, restart
         endif
       endif
     enddo
-! endif
-! if (any(OBC%tracer_y_reservoirs_used)) then
+  endif
+  if (any(OBC%tracer_y_reservoirs_used)) then
     allocate(OBC%tres_y(HI%isd:HI%ied,HI%jsdB:HI%jedB,GV%ke,OBC%ntr))
     OBC%tres_y(:,:,:,:) = 0.0
     do m=1,OBC%ntr
@@ -4966,6 +4959,8 @@ subroutine rotate_OBC_config(OBC_in, G_in, OBC, G, turns)
 
   integer :: l
 
+  if (OBC_in%number_of_segments==0) return
+
   ! Scalar and logical transfer
   OBC%number_of_segments = OBC_in%number_of_segments
   OBC%ke = OBC_in%ke
@@ -5023,8 +5018,10 @@ subroutine rotate_OBC_config(OBC_in, G_in, OBC, G, turns)
   OBC%OBC_pe = OBC_in%OBC_pe
 
   ! remap_CS is set up by initialize_segment_data, so we copy the fields here.
-  allocate(OBC%remap_CS)
-  OBC%remap_CS = OBC_in%remap_CS
+  if (ASSOCIATED(OBC_in%remap_CS)) then
+     allocate(OBC%remap_CS)
+     OBC%remap_CS = OBC_in%remap_CS
+  endif
 
   ! TODO: The OBC registry seems to be a list of "registered" OBC types.
   !   It does not appear to be used, so for now we skip this record.
