@@ -473,7 +473,8 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
     p_stanley, rho_pgf, rho_stanley_pgf ! Pressure [Pa] estimated with Rho_0 and 
                                         ! density [kg m-3] from EOS with and without SGS T variance 
                                         ! in Stanley parameterization.
-  real :: rho_stanley_scalar ! Scalar quantity to hold density [kg m-3] in Stanley diagnostics. 
+  real :: rho_stanley_scalar ! Scalar quantity to hold density [kg m-3] in Stanley diagnostics.
+  real :: tv_stanley_scalar ! Scalar quantity to hold SGS T variance [degc2] in Stanley diagnostics. 
   real :: rho_in_situ(SZI_(G)) ! The in situ density [R ~> kg m-3].
   real :: p_ref(SZI_(G))     !   The pressure used to calculate the coordinate
                              ! density, [R L2 T-2 ~> Pa] (usually 2e7 Pa = 2000 dbar).
@@ -806,10 +807,11 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
   if (CS%Stanley_T2_det_coeff>=0.) then
     do k=1, nz ; do j=js-1,je+1 ; do i=is-1,ie+1
       p_stanley(i,j,k)= -1 * rho_ref * GV%g_Earth * e(i,j,k)
+      tv_stanley_scalar=exp(stoch_eos_pattern(i,j))*tv%varT(i,j,k)
       call calculate_density(tv%T(i,j,k), tv%S(i,j,k), p_stanley(i,j,k), 0.0, 0.0, 0.0, &
          rho_stanley_scalar, tv%eqn_of_state) 
       rho_pgf(i,j,k)=rho_stanley_scalar
-      call calculate_density(tv%T(i,j,k), tv%S(i,j,k), p_stanley(i,j,k), tv%varT(i,j,k), 0.0, 0.0, &
+      call calculate_density(tv%T(i,j,k), tv%S(i,j,k), p_stanley(i,j,k), tv_stanley_scalar, 0.0, 0.0, &
          rho_stanley_scalar, tv%eqn_of_state) 
       rho_stanley_pgf(i,j,k)=rho_stanley_scalar
     enddo; enddo; enddo
