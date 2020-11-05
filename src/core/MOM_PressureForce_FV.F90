@@ -59,6 +59,8 @@ type, public :: PressureForce_FV_CS ; private
                             !! the Stanley form of the Brankart correction.
   integer :: id_e_tidal = -1 !< Diagnostic identifier
   integer :: id_tvar_sgs = -1 !< Diagnostic identifier
+  integer :: id_rho_pgf = -1 !< Diagnostic identifier
+  integer :: id_rho_stanley_pgf = -1 !< Diagnostic identifier
   type(tidal_forcing_CS), pointer :: tides_CSp => NULL() !< Tides control structure
 end type PressureForce_FV_CS
 
@@ -467,6 +469,12 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
   real, dimension(SZI_(G),SZJ_(G),SZK_(G)) :: &
     S_t, S_b, T_t, T_b ! Top and bottom edge values for linear reconstructions
                        ! of salinity and temperature within each layer.
+  real, dimension(SZI_(G),SZJ_(G),SZK_(G)) :: &
+    p_stanley, rho_pgf, rho_stanley_pgf ! Pressure [Pa] estimated with Rho_0 and 
+                                        ! density [kg m-3] from EOS with and without SGS T variance 
+                                        ! in Stanley parameterization.
+  real :: rho_stanley_scalar ! Scalar quantity to hold density [kg m-3] in Stanley diagnostics.
+  real :: tv_stanley_scalar ! Scalar quantity to hold SGS T variance [degc2] in Stanley diagnostics. 
   real :: rho_in_situ(SZI_(G)) ! The in situ density [R ~> kg m-3].
   real :: p_ref(SZI_(G))     !   The pressure used to calculate the coordinate
                              ! density, [R L2 T-2 ~> Pa] (usually 2e7 Pa = 2000 dbar).
@@ -796,8 +804,27 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
     endif
   endif
 
+  if (CS%Stanley_T2_det_coeff>=0.) then
+    do k=1, nz ; do j=js-1,je+1 ; do i=is-1,ie+1
+      p_stanley(i,j,k)= -1 * (rho_ref * (GV%g_Earth * e(i,j,k)))
+      if (present(stoch_eos_pattern)) then
+          tv_stanley_scalar=exp(stoch_eos_pattern(i,j))*tv%varT(i,j,k)
+      else
+          tv_stanley_scalar=tv%varT(i,j,k)
+      endif
+      call calculate_density(tv%T(i,j,k), tv%S(i,j,k), p_stanley(i,j,k), 0.0, 0.0, 0.0, &
+         rho_stanley_scalar, tv%eqn_of_state) 
+      rho_pgf(i,j,k)=rho_stanley_scalar
+      call calculate_density(tv%T(i,j,k), tv%S(i,j,k), p_stanley(i,j,k), tv_stanley_scalar, 0.0, 0.0, &
+         rho_stanley_scalar, tv%eqn_of_state) 
+      rho_stanley_pgf(i,j,k)=rho_stanley_scalar
+    enddo; enddo; enddo
+   endif
+
   if (CS%id_e_tidal>0) call post_data(CS%id_e_tidal, e_tidal, CS%diag)
   if (CS%id_tvar_sgs>0) call post_data(CS%id_tvar_sgs, tv%varT, CS%diag)
+  if (CS%id_tvar_sgs>0) call post_data(CS%id_rho_pgf, rho_pgf, CS%diag)
+  if (CS%id_tvar_sgs>0) call post_data(CS%id_rho_stanley_pgf, rho_stanley_pgf, CS%diag)
 
 end subroutine PressureForce_FV_Bouss
 
@@ -869,6 +896,10 @@ subroutine PressureForce_FV_init(Time, G, GV, US, param_file, diag, CS, tides_CS
   if (CS%Stanley_T2_det_coeff>=0.) then
     CS%id_tvar_sgs = register_diag_field('ocean_model', 'tvar_sgs_pgf', diag%axesTL, &
         Time, 'SGS temperature variance used in PGF', 'degC2')
+    CS%id_rho_pgf = register_diag_field('ocean_model', 'rho_pgf', diag%axesTL, &
+        Time, 'rho in PGF', 'kg m3')
+    CS%id_rho_stanley_pgf = register_diag_field('ocean_model', 'rho_stanley_pgf', diag%axesTL, &
+        Time, 'rho in PGF with Stanley correction', 'kg m3')
   endif
   if (CS%tides) then
     CS%id_e_tidal = register_diag_field('ocean_model', 'e_tidal', diag%axesT1, &
