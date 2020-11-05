@@ -807,7 +807,11 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
   if (CS%Stanley_T2_det_coeff>=0.) then
     do k=1, nz ; do j=js-1,je+1 ; do i=is-1,ie+1
       p_stanley(i,j,k)= -1 * (rho_ref * (GV%g_Earth * e(i,j,k)))
-      tv_stanley_scalar=exp(stoch_eos_pattern(i,j))*tv%varT(i,j,k)
+      if (present(stoch_eos_pattern)) then
+          tv_stanley_scalar=exp(stoch_eos_pattern(i,j))*tv%varT(i,j,k)
+      else
+          tv_stanley_scalar=tv%varT(i,j,k)
+      endif
       call calculate_density(tv%T(i,j,k), tv%S(i,j,k), p_stanley(i,j,k), 0.0, 0.0, 0.0, &
          rho_stanley_scalar, tv%eqn_of_state) 
       rho_pgf(i,j,k)=rho_stanley_scalar
