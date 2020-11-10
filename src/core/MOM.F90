@@ -100,7 +100,7 @@ use MOM_set_visc,              only : set_viscous_BBL, set_viscous_ML, set_visc_
 use MOM_set_visc,              only : set_visc_register_restarts, set_visc_CS
 use MOM_sponge,                only : init_sponge_diags, sponge_CS
 use MOM_state_initialization,  only : MOM_initialize_state
-use MOM_stoch_eos,             only : MOM_stoch_eos_init
+use MOM_stoch_eos,             only : MOM_stoch_eos_init,MOM_stoch_eos_run,MOM_stoch_eos_CS,mom_calc_varT
 use MOM_sum_output,            only : write_energy, accumulate_net_input
 use MOM_sum_output,            only : MOM_sum_output_init, sum_output_CS
 use MOM_ALE_sponge,            only : init_ALE_sponge_diags, ALE_sponge_CS
@@ -225,7 +225,7 @@ type, public :: MOM_control_struct ; private
   logical :: use_ALE_algorithm  !< If true, use the ALE algorithm rather than layered
                     !! isopycnal/stacked shallow water mode. This logical is set by calling the
                     !! function useRegridding() from the MOM_regridding module.
-  logical :: use_stoch_eos  !< If true, use the stochastic equation of state (Stanley et al. 2020)
+  type(MOM_stoch_eos_CS) :: stoch_eos_CS !< structure containing random pattern for stoch EOS
   logical :: offline_tracer_mode = .false.
                     !< If true, step_offline() is called instead of step_MOM().
                     !! This is intended for running MOM6 in offline tracer mode
@@ -992,6 +992,9 @@ subroutine step_MOM_dynamics(forces, p_surf_begin, p_surf_end, dt, dt_thermo, &
   showCallTree = callTree_showQuery()
 
   call cpu_clock_begin(id_clock_dynamics)
+
+  if (CS%stoch_eos_CS%use_stoch_eos) call MOM_stoch_eos_run(G,u,v,dt_thermo,Time_local,CS%stoch_eos_CS,CS%diag)
+  call MOM_calc_varT(G,GV,h,CS%tv,CS%stoch_eos_CS)
 
   if ((CS%t_dyn_rel_adv == 0.0) .and. CS%thickness_diffuse .and. CS%thickness_diffuse_first) then
 
@@ -1815,7 +1818,7 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, restart_CSp, &
   call get_param(param_file, "MOM", "USE_REGRIDDING", CS%use_ALE_algorithm, &
                  "If True, use the ALE algorithm (regridding/remapping). "//&
                  "If False, use the layered isopycnal algorithm.", default=.false. )
-  call get_param(param_file, "MOM", "STOCH_EOS", CS%use_stoch_eos, &
+  call get_param(param_file, "MOM", "STOCH_EOS", CS%stoch_eos_CS%use_stoch_eos, &
                  "If true, stochastic perturbations are applied "//&
                  "to the EOS.", default=.false.)
   call get_param(param_file, "MOM", "BULKMIXEDLAYER", bulkmixedlayer, &
@@ -2568,6 +2571,7 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, restart_CSp, &
   call thickness_diffuse_init(Time, G, GV, US, param_file, diag, CS%CDp, CS%thickness_diffuse_CSp)
 
   new_sim = is_new_run(restart_CSp)
+  call MOM_stoch_eos_init(G,Time,param_file,CS%stoch_eos_CS,restart_CSp,diag)
   if (CS%split) then
     allocate(eta(SZI_(G),SZJ_(G))) ; eta(:,:) = 0.0
     call initialize_dyn_split_RK2(CS%u, CS%v, CS%h, CS%uh, CS%vh, eta, Time, &
@@ -2576,9 +2580,6 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, restart_CSp, &
               CS%thickness_diffuse_CSp,                                      &
               CS%OBC, CS%update_OBC_CSp, CS%ALE_CSp, CS%set_visc_CSp,        &
               CS%visc, dirs, CS%ntrunc, calc_dtbt=calc_dtbt, cont_stencil=CS%cont_stencil)
-     if (CS%use_stoch_eos) then 
-        call MOM_stoch_eos_init(G,Time,param_file,CS%dyn_split_RK2_CSp%stoch_eos_pattern,new_sim)
-     endif
     if (CS%dtbt_reset_period > 0.0) then
       CS%dtbt_reset_interval = real_to_time(CS%dtbt_reset_period)
       ! Set dtbt_reset_time to be the next even multiple of dtbt_reset_interval.
@@ -2597,18 +2598,12 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, restart_CSp, &
             CS%ADp, CS%CDp, MOM_internal_state, CS%MEKE, CS%OBC,           &
             CS%update_OBC_CSp, CS%ALE_CSp, CS%set_visc_CSp, CS%visc, dirs, &
             CS%ntrunc, cont_stencil=CS%cont_stencil)
-     if (CS%use_stoch_eos) then 
-        call MOM_stoch_eos_init(G,Time,param_file,CS%dyn_unsplit_RK2_CSp%stoch_eos_pattern,new_sim)
-     endif
   else
     call initialize_dyn_unsplit(CS%u, CS%v, CS%h, Time, G, GV, US,         &
             param_file, diag, CS%dyn_unsplit_CSp, restart_CSp,             &
             CS%ADp, CS%CDp, MOM_internal_state, CS%MEKE, CS%OBC,           &
             CS%update_OBC_CSp, CS%ALE_CSp, CS%set_visc_CSp, CS%visc, dirs, &
             CS%ntrunc, cont_stencil=CS%cont_stencil)
-     if (CS%use_stoch_eos) then 
-        call MOM_stoch_eos_init(G,Time,param_file,CS%dyn_unsplit_CSp%stoch_eos_pattern,new_sim)
-     endif
   endif
 
   call callTree_waypoint("dynamics initialized (initialize_MOM)")

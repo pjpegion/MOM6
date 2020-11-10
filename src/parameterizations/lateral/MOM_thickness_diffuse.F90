@@ -80,6 +80,7 @@ type, public :: thickness_diffuse_CS ; private
   real :: Stanley_det_coeff      !< The coefficient correlating SGS temperature variance with the mean
                                  !! temperature gradient in the deterministic part of the Stanley parameterization.
                                  !! Negative values disable the scheme." [nondim]
+  logical :: use_stoch_gm        !< If true, also use the stochastic equation of state in MOM_thickness_diffuse
 
   type(diag_ctrl), pointer :: diag => NULL() !< structure used to regulate timing of diagnostics
   real, pointer :: GMwork(:,:)       => NULL()  !< Work by thickness diffusivity [R Z L2 T-3 ~> W m-2]
@@ -748,39 +749,43 @@ subroutine thickness_diffuse_full(h, e, Kh_u, Kh_v, tv, uhD, vhD, cg1, dt, G, GV
     pres(i,j,2) = pres(i,j,1) + (GV%g_Earth*GV%H_to_RZ) * h(i,j,1)
   enddo ; enddo
   if (use_Stanley) then
+    if (CS%use_stoch_gm) then
+      Tsgs2 = CS%Stanley_det_coeff * tv%varT
+    else
 !$OMP do
-    do k=1, nz ; do j=js-1,je+1 ; do i=is-1,ie+1
-      !! SGS variance in i-direction [degC2]
-      !dTdi2 = ( ( G%mask2dCu(I  ,j) * G%IdxCu(I  ,j) * ( T(i+1,j,k) - T(i,j,k) ) &
-      !          + G%mask2dCu(I-1,j) * G%IdxCu(I-1,j) * ( T(i,j,k) - T(i-1,j,k) ) &
-      !          ) * G%dxT(i,j) * 0.5 )**2
-      !! SGS variance in j-direction [degC2]
-      !dTdj2 = ( ( G%mask2dCv(i,J  ) * G%IdyCv(i,J  ) * ( T(i,j+1,k) - T(i,j,k) ) &
-      !          + G%mask2dCv(i,J-1) * G%IdyCv(i,J-1) * ( T(i,j,k) - T(i,j-1,k) ) &
-      !          ) * G%dyT(i,j) * 0.5 )**2
-      !Tsgs2(i,j,k) = CS%Stanley_det_coeff * 0.5 * ( dTdi2 + dTdj2 )
-      ! This block does a thickness weighted variance calculation and helps control for
-      ! extreme gradients along layers which are vanished against topography. It is
-      ! still a poor approximation in the interior when coordinates are strongly tilted.
-      hl(1) = h(i,j,k) * G%mask2dT(i,j)
-      hl(2) = h(i-1,j,k) * G%mask2dCu(I-1,j)
-      hl(3) = h(i+1,j,k) * G%mask2dCu(I,j)
-      hl(4) = h(i,j-1,k) * G%mask2dCv(i,J-1)
-      hl(5) = h(i,j+1,k) * G%mask2dCv(i,J)
-      r_sm_H = 1. / ( ( hl(1) + ( ( hl(2) + hl(3) ) + ( hl(4) + hl(5) ) ) ) + GV%H_subroundoff )
-      ! Mean of T
-      Tl(1) = T(i,j,k) ; Tl(2) = T(i-1,j,k) ; Tl(3) = T(i+1,j,k)
-      Tl(4) = T(i,j-1,k) ; Tl(5) = T(i,j+1,k)
-      mn_T = ( hl(1)*Tl(1) + ( ( hl(2)*Tl(2) + hl(3)*Tl(3) ) + ( hl(4)*Tl(4) + hl(5)*Tl(5) ) ) ) * r_sm_H
-      ! Adjust T vectors to have zero mean
-      Tl(:) = Tl(:) - mn_T ; mn_T = 0.
-      ! Variance of T
-      mn_T2 = ( hl(1)*Tl(1)*Tl(1) + ( ( hl(2)*Tl(2)*Tl(2) + hl(3)*Tl(3)*Tl(3) ) &
-                                    + ( hl(4)*Tl(4)*Tl(4) + hl(5)*Tl(5)*Tl(5) ) ) ) * r_sm_H
-      ! Variance should be positive but round-off can violate this. Calculating
-      ! variance directly would fix this but requires more operations.
-      Tsgs2(i,j,k) = CS%Stanley_det_coeff * max(0., mn_T2)
-     enddo ; enddo ; enddo
+       do k=1, nz ; do j=js-1,je+1 ; do i=is-1,ie+1
+         !! SGS variance in i-direction [degC2]
+         !dTdi2 = ( ( G%mask2dCu(I  ,j) * G%IdxCu(I  ,j) * ( T(i+1,j,k) - T(i,j,k) ) &
+         !          + G%mask2dCu(I-1,j) * G%IdxCu(I-1,j) * ( T(i,j,k) - T(i-1,j,k) ) &
+         !          ) * G%dxT(i,j) * 0.5 )**2
+         !! SGS variance in j-direction [degC2]
+         !dTdj2 = ( ( G%mask2dCv(i,J  ) * G%IdyCv(i,J  ) * ( T(i,j+1,k) - T(i,j,k) ) &
+         !          + G%mask2dCv(i,J-1) * G%IdyCv(i,J-1) * ( T(i,j,k) - T(i,j-1,k) ) &
+         !          ) * G%dyT(i,j) * 0.5 )**2
+         !Tsgs2(i,j,k) = CS%Stanley_det_coeff * 0.5 * ( dTdi2 + dTdj2 )
+         ! This block does a thickness weighted variance calculation and helps control for
+         ! extreme gradients along layers which are vanished against topography. It is
+         ! still a poor approximation in the interior when coordinates are strongly tilted.
+         hl(1) = h(i,j,k) * G%mask2dT(i,j)
+         hl(2) = h(i-1,j,k) * G%mask2dCu(I-1,j)
+         hl(3) = h(i+1,j,k) * G%mask2dCu(I,j)
+         hl(4) = h(i,j-1,k) * G%mask2dCv(i,J-1)
+         hl(5) = h(i,j+1,k) * G%mask2dCv(i,J)
+         r_sm_H = 1. / ( ( hl(1) + ( ( hl(2) + hl(3) ) + ( hl(4) + hl(5) ) ) ) + GV%H_subroundoff )
+         ! Mean of T
+         Tl(1) = T(i,j,k) ; Tl(2) = T(i-1,j,k) ; Tl(3) = T(i+1,j,k)
+         Tl(4) = T(i,j-1,k) ; Tl(5) = T(i,j+1,k)
+         mn_T = ( hl(1)*Tl(1) + ( ( hl(2)*Tl(2) + hl(3)*Tl(3) ) + ( hl(4)*Tl(4) + hl(5)*Tl(5) ) ) ) * r_sm_H
+         ! Adjust T vectors to have zero mean
+         Tl(:) = Tl(:) - mn_T ; mn_T = 0.
+         ! Variance of T
+         mn_T2 = ( hl(1)*Tl(1)*Tl(1) + ( ( hl(2)*Tl(2)*Tl(2) + hl(3)*Tl(3)*Tl(3) ) &
+                                       + ( hl(4)*Tl(4)*Tl(4) + hl(5)*Tl(5)*Tl(5) ) ) ) * r_sm_H
+         ! Variance should be positive but round-off can violate this. Calculating
+         ! variance directly would fix this but requires more operations.
+         Tsgs2(i,j,k) = CS%Stanley_det_coeff * max(0., mn_T2)
+        enddo ; enddo ; enddo
+     endif
   endif
 !$OMP do
   do j=js-1,je+1
@@ -1974,6 +1979,9 @@ subroutine thickness_diffuse_init(Time, G, GV, US, param_file, diag, CDp, CS)
                  "The coefficient correlating SGS temperature variance with the mean "//&
                  "temperature gradient in the deterministic part of the Stanley parameterization. "//&
                  "Negative values disable the scheme.", units="nondim", default=-1.0)
+  call get_param(param_file, mdl, "STOCH_GM", CS%use_stoch_gm, &
+                 "If true, stochastic perturbations are also applied "//&
+                 "to the GM scheme.", default=.true.)
   call get_param(param_file, mdl, "OMEGA", omega, &
                  "The rotation rate of the earth.", &
                  default=7.2921e-5, units="s-1", scale=US%T_to_s, do_not_log=.not.CS%use_FGNV_streamfn)
