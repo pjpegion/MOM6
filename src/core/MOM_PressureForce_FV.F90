@@ -415,7 +415,7 @@ end subroutine PressureForce_FV_nonBouss
 !! To work, the following fields must be set outside of the usual (is:ie,js:je)
 !! range before this subroutine is called:
 !!   h(isB:ie+1,jsB:je+1), T(isB:ie+1,jsB:je+1), and S(isB:ie+1,jsB:je+1).
-subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm, pbce, eta,stoch_eos_pattern)
+subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm, pbce, eta)
   type(ocean_grid_type),                     intent(in)  :: G   !< Ocean grid structure
   type(verticalGrid_type),                   intent(in)  :: GV  !< Vertical grid structure
   type(unit_scale_type),                     intent(in)  :: US  !< A dimensional unit scaling type
@@ -433,7 +433,6 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
   real, dimension(SZI_(G),SZJ_(G)),          optional, intent(out) :: eta !< The bottom mass used to
                                                          !! calculate PFu and PFv [H ~> m or kg m-2], with any
                                                          !! tidal contributions or compressibility compensation.
-  real, dimension(SZI_(G),SZJ_(G)),          optional, intent(in)    :: stoch_eos_pattern ! random AR(1) for stochastic EOS
   ! Local variables
   real, dimension(SZI_(G),SZJ_(G),SZK_(G)+1) :: e ! Interface height in depth units [Z ~> m].
   real, dimension(SZI_(G),SZJ_(G))  :: &
@@ -513,48 +512,6 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
   do i=Isq,Ieq+1 ; p0(i) = 0.0 ; enddo
   use_ALE = .false.
   if (associated(ALE_CSp)) use_ALE = CS%reconstruct .and. use_EOS
-  if (CS%Stanley_T2_det_coeff>=0.) then
-    if (.not. associated(tv%varT)) call safe_alloc_ptr(tv%varT, G%isd, G%ied, G%jsd, G%jed, GV%ke)
-    do k=1, nz ; do j=js-1,je+1 ; do i=is-1,ie+1
-      ! Strictly speaking we should estimate the *horizontal* grid-scale variance
-      ! but neither of the following blocks make a rotation to the horizontal
-      ! and instead work along coordinate.
-
-      ! This block calculates a simple |delta T| along coordinates and does
-      ! not allow vanishing layer thicknesses or layers tracking topography
-      !! SGS variance in i-direction [degC2]
-      !dTdi2 = ( ( G%mask2dCu(I  ,j) * G%IdxCu(I  ,j) * ( tv%T(i+1,j,k) - tv%T(i,j,k) ) &
-      !          + G%mask2dCu(I-1,j) * G%IdxCu(I-1,j) * ( tv%T(i,j,k) - tv%T(i-1,j,k) ) &
-      !          ) * G%dxT(i,j) * 0.5 )**2
-      !! SGS variance in j-direction [degC2]
-      !dTdj2 = ( ( G%mask2dCv(i,J  ) * G%IdyCv(i,J  ) * ( tv%T(i,j+1,k) - tv%T(i,j,k) ) &
-      !          + G%mask2dCv(i,J-1) * G%IdyCv(i,J-1) * ( tv%T(i,j,k) - tv%T(i,j-1,k) ) &
-      !          ) * G%dyT(i,j) * 0.5 )**2
-      !tv%varT(i,j,k) = CS%Stanley_T2_det_coeff * 0.5 * ( dTdi2 + dTdj2 )
-
-      ! This block does a thickness weighted variance calculation and helps control for
-      ! extreme gradients along layers which are vanished against topography. It is
-      ! still a poor approximation in the interior when coordinates are strongly tilted.
-      hl(1) = h(i,j,k) * G%mask2dT(i,j)
-      hl(2) = h(i-1,j,k) * G%mask2dCu(I-1,j)
-      hl(3) = h(i+1,j,k) * G%mask2dCu(I,j)
-      hl(4) = h(i,j-1,k) * G%mask2dCv(i,J-1)
-      hl(5) = h(i,j+1,k) * G%mask2dCv(i,J)
-      r_sm_H = 1. / ( ( hl(1) + ( ( hl(2) + hl(3) ) + ( hl(4) + hl(5) ) ) ) + GV%H_subroundoff )
-      ! Mean of T
-      Tl(1) = tv%T(i,j,k) ; Tl(2) = tv%T(i-1,j,k) ; Tl(3) = tv%T(i+1,j,k)
-      Tl(4) = tv%T(i,j-1,k) ; Tl(5) = tv%T(i,j+1,k)
-      mn_T = ( hl(1)*Tl(1) + ( ( hl(2)*Tl(2) + hl(3)*Tl(3) ) + ( hl(4)*Tl(4) + hl(5)*Tl(5) ) ) ) * r_sm_H
-      ! Adjust T vectors to have zero mean
-      Tl(:) = Tl(:) - mn_T ; mn_T = 0.
-      ! Variance of T
-      mn_T2 = ( hl(1)*Tl(1)*Tl(1) + ( ( hl(2)*Tl(2)*Tl(2) + hl(3)*Tl(3)*Tl(3) ) &
-                                    + ( hl(4)*Tl(4)*Tl(4) + hl(5)*Tl(5)*Tl(5) ) ) ) * r_sm_H
-      ! Variance should be positive but round-off can violate this. Calculating
-      ! variance directly would fix this but requires more operations.
-      tv%varT(i,j,k) = CS%Stanley_T2_det_coeff * max(0., mn_T2)
-    enddo ; enddo ; enddo
-  endif
 
   h_neglect = GV%H_subroundoff
   dz_neglect = GV%H_subroundoff * GV%H_to_Z
@@ -705,17 +662,10 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
                        G%HI, GV, tv%eqn_of_state, US, dpa, intz_dpa, intx_dpa, inty_dpa, &
                        useMassWghtInterp=CS%useMassWghtInterp)
         elseif ( CS%Recon_Scheme == 2 ) then
-             if (present(stoch_eos_pattern)) then
-             call int_density_dz_generic_ppm(k, tv, T_t, T_b, S_t, S_b, e, &
-                       rho_ref, CS%Rho0, GV%g_Earth, dz_neglect, G%bathyT, &
-                       G%HI, GV, tv%eqn_of_state, US, dpa, intz_dpa, intx_dpa, inty_dpa, &
-                       useMassWghtInterp=CS%useMassWghtInterp,stoch_eos_pattern=stoch_eos_pattern)
-              else
-             call int_density_dz_generic_ppm(k, tv, T_t, T_b, S_t, S_b, e, &
-                       rho_ref, CS%Rho0, GV%g_Earth, dz_neglect, G%bathyT, &
-                       G%HI, GV, tv%eqn_of_state, US, dpa, intz_dpa, intx_dpa, inty_dpa, &
-                       useMassWghtInterp=CS%useMassWghtInterp)
-           endif
+          call int_density_dz_generic_ppm(k, tv, T_t, T_b, S_t, S_b, e, &
+                    rho_ref, CS%Rho0, GV%g_Earth, dz_neglect, G%bathyT, &
+                    G%HI, GV, tv%eqn_of_state, US, dpa, intz_dpa, intx_dpa, inty_dpa, &
+                    useMassWghtInterp=CS%useMassWghtInterp)
         endif
       else
         call int_density_dz(tv_tmp%T(:,:,k), tv_tmp%S(:,:,k), e(:,:,K), e(:,:,K+1), &
@@ -807,11 +757,7 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
   if (CS%Stanley_T2_det_coeff>=0.) then
     do k=1, nz ; do j=js-1,je+1 ; do i=is-1,ie+1
       p_stanley(i,j,k)= -1 * (rho_ref * (GV%g_Earth * e(i,j,k)))
-      if (present(stoch_eos_pattern)) then
-          tv_stanley_scalar=exp(stoch_eos_pattern(i,j))*tv%varT(i,j,k)
-      else
-          tv_stanley_scalar=tv%varT(i,j,k)
-      endif
+      tv_stanley_scalar=tv%varT(i,j,k) * CS%Stanley_T2_det_coeff
       call calculate_density(tv%T(i,j,k), tv%S(i,j,k), p_stanley(i,j,k), 0.0, 0.0, 0.0, &
          rho_stanley_scalar, tv%eqn_of_state) 
       rho_pgf(i,j,k)=rho_stanley_scalar

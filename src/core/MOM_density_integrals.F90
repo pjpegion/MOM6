@@ -666,7 +666,7 @@ end subroutine int_density_dz_generic_plm
 !! are parabolic profiles
 subroutine int_density_dz_generic_ppm(k, tv, T_t, T_b, S_t, S_b, e, &
                                       rho_ref, rho_0, G_e, dz_subroundoff, bathyT, HI, GV, EOS, US, &
-                                      dpa, intz_dpa, intx_dpa, inty_dpa, useMassWghtInterp,stoch_eos_pattern)
+                                      dpa, intz_dpa, intx_dpa, inty_dpa, useMassWghtInterp)
   integer,              intent(in)  :: k   !< Layer index to calculate integrals for
   type(hor_index_type), intent(in)  :: HI  !< Ocean horizontal index structures for the input arrays
   type(verticalGrid_type), intent(in) :: GV !< Vertical grid structure
@@ -707,7 +707,6 @@ subroutine int_density_dz_generic_ppm(k, tv, T_t, T_b, S_t, S_b, e, &
                                            !! divided by the y grid spacing [R L2 T-2 ~> Pa]
   logical,    optional, intent(in)  :: useMassWghtInterp !< If true, uses mass weighting to
                                            !! interpolate T/S for top and bottom integrals.
-  real, dimension(SZI_(HI),SZJ_(HI)), optional, intent(in)    :: stoch_eos_pattern ! random AR(1) for stochastic EOS
 
 ! This subroutine calculates (by numerical quadrature) integrals of
 ! pressure anomalies across layers, which are required for calculating the
@@ -801,7 +800,6 @@ subroutine int_density_dz_generic_ppm(k, tv, T_t, T_b, S_t, S_b, e, &
       if (use_varT) T25(:) = tv%varT(i,j,k)
       if (use_covarTS) TS5(:) = tv%covarTS(i,j,k)
       if (use_varS) S25(:) = tv%varS(i,j,k)
-      if (present(stoch_eos_pattern)) T25(:) = exp(stoch_eos_pattern(i,j))*T25(:)  ! adjust the temperature variance calculation
       call calculate_density(T5, S5, p5, T25, TS5, S25, r5, &
                              1, 5, EOS, rho_ref=rho_ref_mks, scale=rho_scale)
     else
