@@ -36,7 +36,7 @@ type, public :: MOM_stoch_eos_CS
   real ALLOCABLE_, dimension(NIMEM_,NJMEM_) :: phi
                     !< temporal correlation stochastic EOS (deugging)
   logical :: use_stoch_eos  !< If true, use the stochastic equation of state (Stanley et al. 2020)
-  integer :: id_stoch_eos  = -1, id_stoch_phi  = -1
+!  integer :: id_stoch_eos  = -1, id_stoch_phi  = -1
 end type MOM_stoch_eos_CS
 
 
@@ -82,18 +82,20 @@ contains
      enddo
   endif
 
-  stoch_eos_CS%id_stoch_eos = register_diag_field('ocean_model', 'stoch_eos', diag%axesT1, Time, &
-      'random pattern for EOS', 'None')
-  stoch_eos_CS%id_stoch_phi = register_diag_field('ocean_model', 'stoch_phi', diag%axesT1, Time, &
-      'phi for EOS', 'None')
-  print*,'PJP registered output',stoch_eos_CS%id_stoch_eos,stoch_eos_CS%id_stoch_phi
+  !stoch_eos_CS%id_stoch_eos = register_diag_field('ocean_model', 'stoch_eos', diag%axesT1, Time, &
+  !    'random pattern for EOS', 'None')
+  !stoch_eos_CS%id_stoch_phi = register_diag_field('ocean_model', 'stoch_phi', diag%axesT1, Time, &
+  !    'phi for EOS', 'None')
+  !print*,'PJP registered output',stoch_eos_CS%id_stoch_eos,stoch_eos_CS%id_stoch_phi
   
   end subroutine MOM_stoch_eos_init
 
   subroutine MOM_stoch_eos_run(G,u,v,delt,Time,stoch_eos_CS,diag)
   type(ocean_grid_type), intent(in)    :: G
-  real,                  intent(in)    :: u(:,:,:)  ! zonal current
-  real,                  intent(in)    :: v(:,:,:)  ! meridional current
+  real, dimension(SZIB_(G),SZJ_(G),SZK_(G)), &
+                                 intent(in)  :: u      !< The zonal velocity [L T-1 ~> m s-1].
+  real, dimension(SZI_(G),SZJB_(G),SZK_(G)), &
+                                 intent(in)  :: v      !< The meridional velocity [L T-1 ~> m s-1].
   real,                  intent(in)    :: delt 
   type(time_type),       intent(in)    :: Time
   type(MOM_stoch_eos_CS), intent(inout) :: stoch_eos_CS
@@ -106,13 +108,16 @@ contains
   call random_2d_constructor(rn_CS, G%HI, Time, seed)
   call random_2d_norm(rn_CS, G%HI, rgauss)
   ! advance AR(1)
-  do j=G%jsd,G%jed
-     do i=G%isd,G%ied
-        ubar=0.5*(u(i,j,1)+u(i+1,j,1))
-        vbar=0.5*(v(i,j,1)+v(i,j+1,1))
+  print*,'isd,ied,jsd,jed',G%isd,G%ied,G%jsd,G%jed
+  print*,'size of u x',size(u,1),lbound(u,1),ubound(u,1)
+  print*,'size of u y',size(u,2),lbound(u,2),ubound(u,2)
+  do j=G%jsc,G%jec
+     do i=G%isc,G%iec
+        ubar=0.5*(u(I,j,1)+u(I-1,j,1))
+        vbar=0.5*(v(i,J,1)+v(i,J-1,1))
         phi=exp(-1*delt*tfac*sqrt((ubar**2+vbar**2)*l2_inv(i,j)))
         stoch_eos_CS%pattern(i,j)=phi*stoch_eos_CS%pattern(i,j) + amplitude*sqrt(1-phi**2)*rgauss(i,j)
-        stoch_eos_CS%pattern(i,j)=phi
+        stoch_eos_CS%phi(i,j)=phi
      enddo
   enddo
   !print*,'stoch_run ubar',minval(u),maxval(u),minval(v),maxval(v)
@@ -123,10 +128,10 @@ contains
   !print*,'rp bounds',lbound(random_pattern,1),lbound(random_pattern,2),ubound(random_pattern,1),ubound(random_pattern,2)
   !print*,'subset',minval(rgauss(G%idg_offset:G%idg_offset+G%isd,G%jdg_offset:G%jdg_offset+G%jsd)),&
   !                maxval(rgauss(G%idg_offset:G%idg_offset+G%isd,G%jdg_offset:G%jdg_offset+G%jsd))
-  print*,'PJP should be posting',stoch_eos_CS%id_stoch_eos,stoch_eos_CS%id_stoch_phi
-  print*,'PJP min/max',minval(stoch_eos_CS%phi),maxval(stoch_eos_CS%phi),minval(stoch_eos_CS%pattern),maxval(stoch_eos_CS%pattern)
-  if (stoch_eos_CS%id_stoch_eos > 0) call post_data(stoch_eos_CS%id_stoch_eos, stoch_eos_CS%pattern, diag)!, mask=G%mask2dT)
-  if (stoch_eos_CS%id_stoch_phi > 0) call post_data(stoch_eos_CS%id_stoch_phi, stoch_eos_CS%phi, diag)!, mask=G%mask2dT)
+  !print*,'PJP should be posting',stoch_eos_CS%id_stoch_eos,stoch_eos_CS%id_stoch_phi
+  !print*,'PJP min/max',minval(stoch_eos_CS%phi),maxval(stoch_eos_CS%phi),minval(stoch_eos_CS%pattern),maxval(stoch_eos_CS%pattern)
+  !if (stoch_eos_CS%id_stoch_eos > 0) call post_data(stoch_eos_CS%id_stoch_eos, stoch_eos_CS%pattern, diag)!, mask=G%mask2dT)
+  !if (stoch_eos_CS%id_stoch_phi > 0) call post_data(stoch_eos_CS%id_stoch_phi, stoch_eos_CS%phi, diag)!, mask=G%mask2dT)
   
   end subroutine MOM_stoch_eos_run
 
