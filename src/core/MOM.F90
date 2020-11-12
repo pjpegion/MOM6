@@ -158,7 +158,7 @@ type MOM_diag_IDs
   integer :: id_u  = -1, id_v  = -1, id_h  = -1
   !>@}
   !> 2-d state field diagnotic ID
-  integer :: id_ssh_inst = -1
+  integer :: id_ssh_inst = -1, id_stoch_eos = -1, id_stoch_phi = -1
 end type MOM_diag_IDs
 
 !> Control structure for the MOM module, including the variables that describe
@@ -992,7 +992,7 @@ subroutine step_MOM_dynamics(forces, p_surf_begin, p_surf_end, dt, dt_thermo, &
   showCallTree = callTree_showQuery()
 
   call cpu_clock_begin(id_clock_dynamics)
-
+  print*,'calling stoch_eos_run',size(u,1),size(u,2),size(v,1),size(v,2)
   if (CS%stoch_eos_CS%use_stoch_eos) call MOM_stoch_eos_run(G,u,v,dt_thermo,Time_local,CS%stoch_eos_CS,CS%diag)
   call MOM_calc_varT(G,GV,h,CS%tv,CS%stoch_eos_CS)
 
@@ -1125,6 +1125,8 @@ subroutine step_MOM_dynamics(forces, p_surf_begin, p_surf_end, dt, dt_thermo, &
   if (IDs%id_u > 0) call post_data(IDs%id_u, u, CS%diag)
   if (IDs%id_v > 0) call post_data(IDs%id_v, v, CS%diag)
   if (IDs%id_h > 0) call post_data(IDs%id_h, h, CS%diag)
+  if (IDs%id_stoch_eos > 0) call post_data(IDs%id_stoch_eos, CS%stoch_eos_CS%pattern, CS%diag)!, mask=G%mask2dT)
+  if (IDs%id_stoch_phi > 0) call post_data(IDs%id_stoch_phi, CS%stoch_eos_CS%phi, CS%diag)!, mask=G%mask2dT)
   call disable_averaging(CS%diag)
   call cpu_clock_end(id_clock_diagnostics) ; call cpu_clock_end(id_clock_other)
 
@@ -2855,6 +2857,10 @@ subroutine register_diags(Time, G, GV, US, IDs, diag)
       v_extensive=.true., conversion=H_convert)
   IDs%id_ssh_inst = register_diag_field('ocean_model', 'SSH_inst', diag%axesT1, &
       Time, 'Instantaneous Sea Surface Height', 'm')
+  IDs%id_stoch_eos = register_diag_field('ocean_model', 'stoch_eos', diag%axesT1, Time, &
+      'random pattern for EOS', 'None')
+  IDs%id_stoch_phi = register_diag_field('ocean_model', 'stoch_phi', diag%axesT1, Time, &
+      'phi for EOS', 'None')
 end subroutine register_diags
 
 !> Set up CPU clock IDs for timing various subroutines.
