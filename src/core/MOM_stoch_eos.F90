@@ -1,0 +1,194 @@
+!> Provides the ocean stochastic equation of state
+module MOM_stoch_eos
+! This file is part of MOM6. See LICENSE.md for the license.
+use MOM_grid,            only : ocean_grid_type
+use MOM_hor_index,       only : hor_index_type
+use MOM_file_parser,     only : get_param, param_file_type
+use MOM_random,          only : PRNG,random_2d_constructor,random_2d_norm
+use MOM_time_manager,    only : time_type
+use MOM_io,              only : vardesc, var_desc
+use MOM_restart,         only : MOM_restart_CS,is_new_run
+use MOM_diag_mediator,   only : register_diag_field,post_data,diag_ctrl,safe_alloc_ptr
+use MOM_variables,       only : thermo_var_ptrs
+use MOM_verticalGrid,    only : verticalGrid_type
+use MOM_restart,         only : register_restart_field
+!use random_numbers_mod, only : getRandomNumbers,initializeRandomNumberStream,randomNumberStream
+
+implicit none
+#include <MOM_memory.h>
+
+public MOM_stoch_eos_init
+public MOM_stoch_eos_run
+public MOM_calc_varT
+
+real,private ALLOCABLE_, dimension(NIMEM_,NJMEM_) :: l2_inv
+real,private ALLOCABLE_, dimension(NIMEM_,NJMEM_) :: rgauss
+real, parameter,private :: tfac=0.27
+real, parameter,private :: amplitude=0.624499 !0.39 is variance
+integer        ,private :: seed
+type(PRNG)  ::  rn_CS
+!integer(8) :: npts
+!real :: pi
+logical first_time
+type, public :: MOM_stoch_eos_CS 
+  real,public  ALLOCABLE_, dimension(NIMEM_,NJMEM_) :: pattern
+                    !< Random pattern for stochastic EOS
+  real ALLOCABLE_, dimension(NIMEM_,NJMEM_) :: phi
+                    !< temporal correlation stochastic EOS (deugging)
+  logical :: use_stoch_eos  !< If true, use the stochastic equation of state (Stanley et al. 2020)
+!  integer :: id_stoch_eos  = -1, id_stoch_phi  = -1
+end type MOM_stoch_eos_CS
+
+
+contains
+  subroutine MOM_stoch_eos_init(G,Time,param_file,stoch_eos_CS,restart_CS,diag)
+! initialization subroutine called my MOM.F90,
+  type(param_file_type), intent(in)    :: param_file  !< structure indicating parameter file to parse
+  type(ocean_grid_type), intent(in)    :: G
+  type(time_type),       intent(in)    :: Time
+  type(MOM_stoch_eos_CS), intent(inout) :: stoch_eos_CS
+  type(MOM_restart_CS),  pointer       :: restart_CS
+  type(diag_ctrl),       target, intent(inout) :: diag       !< to control diagnostics
+  integer :: i,j
+  type(vardesc)      :: vd
+  seed=0
+  ! contants
+  !pi=2*acos(0.0)
+  call get_param(param_file, "MOM", "STOCH_EOS", stoch_eos_CS%use_stoch_eos, &
+                 "If true, stochastic perturbations are applied "//&
+                 "to the EOS.", default=.false.)
+  ALLOC_(stoch_eos_CS%pattern(G%isd:G%ied,G%jsd:G%jed)) ; stoch_eos_CS%pattern(:,:) = 0.0
+  vd = var_desc("stoch_eos_pattern","nondim","Random pattern for stoch EOS",'h','1')
+  call register_restart_field(stoch_eos_CS%pattern, vd, .false., restart_CS)
+  ALLOC_(stoch_eos_CS%phi(G%isd:G%ied,G%jsd:G%jed)) ; stoch_eos_CS%phi(:,:) = 0.0
+  ALLOC_(l2_inv(G%isd:G%ied,G%jsd:G%jed)) ! currently allocating for data domain, should I which to compute domain?
+  ALLOC_(rgauss(G%isd:G%ied,G%jsd:G%jed)) ! currently allocating for data domain, should I which to compute domain?
+  call get_param(param_file, "MOM", "SEED_STOCH_EOS", seed, &
+                 "Specfied seed for random number sequence ", default=0)
+  call random_2d_constructor(rn_CS, G%HI, Time, seed)
+  call random_2d_norm(rn_CS, G%HI, rgauss)
+  ! fill array with approximation of grid area needed for decorrelation
+  ! time-scale calculation
+  do j=G%jsd,G%jed
+     do i=G%isd,G%ied
+        l2_inv(i,j)=1.0/(G%dxT(i,j)**2+G%dyT(i,j)**2)
+     enddo
+  enddo 
+  if (is_new_run(restart_CS)) then
+     do j=G%jsd,G%jed
+        do i=G%isd,G%ied
+           stoch_eos_CS%pattern(i,j)=amplitude*rgauss(i,j)
+        enddo
+     enddo
+  endif
+
+  !stoch_eos_CS%id_stoch_eos = register_diag_field('ocean_model', 'stoch_eos', diag%axesT1, Time, &
+  !    'random pattern for EOS', 'None')
+  !stoch_eos_CS%id_stoch_phi = register_diag_field('ocean_model', 'stoch_phi', diag%axesT1, Time, &
+  !    'phi for EOS', 'None')
+  !print*,'PJP registered output',stoch_eos_CS%id_stoch_eos,stoch_eos_CS%id_stoch_phi
+  
+  end subroutine MOM_stoch_eos_init
+
+  subroutine MOM_stoch_eos_run(G,u,v,delt,Time,stoch_eos_CS,diag)
+  type(ocean_grid_type), intent(in)    :: G
+  real, dimension(SZIB_(G),SZJ_(G),SZK_(G)), &
+                                 intent(in)  :: u      !< The zonal velocity [L T-1 ~> m s-1].
+  real, dimension(SZI_(G),SZJB_(G),SZK_(G)), &
+                                 intent(in)  :: v      !< The meridional velocity [L T-1 ~> m s-1].
+  real,                  intent(in)    :: delt 
+  type(time_type),       intent(in)    :: Time
+  type(MOM_stoch_eos_CS), intent(inout) :: stoch_eos_CS
+  type(diag_ctrl),       target, intent(inout) :: diag       !< to control diagnostics
+! locals
+  integer                                ::  i,j
+  integer :: yr,mo,dy,hr,mn,sc
+  real                                   :: phi,ubar,vbar
+
+  call random_2d_constructor(rn_CS, G%HI, Time, seed)
+  call random_2d_norm(rn_CS, G%HI, rgauss)
+  ! advance AR(1)
+  print*,'isd,ied,jsd,jed',G%isd,G%ied,G%jsd,G%jed
+  print*,'size of u x',size(u,1),lbound(u,1),ubound(u,1)
+  print*,'size of u y',size(u,2),lbound(u,2),ubound(u,2)
+  do j=G%jsc,G%jec
+     do i=G%isc,G%iec
+        ubar=0.5*(u(I,j,1)+u(I-1,j,1))
+        vbar=0.5*(v(i,J,1)+v(i,J-1,1))
+        phi=exp(-1*delt*tfac*sqrt((ubar**2+vbar**2)*l2_inv(i,j)))
+        stoch_eos_CS%pattern(i,j)=phi*stoch_eos_CS%pattern(i,j) + amplitude*sqrt(1-phi**2)*rgauss(i,j)
+        stoch_eos_CS%phi(i,j)=phi
+     enddo
+  enddo
+  !print*,'stoch_run ubar',minval(u),maxval(u),minval(v),maxval(v)
+  !print*,'stoch_run rp',minval(random_pattern),maxval(random_pattern),minval(rgauss),maxval(rgauss)
+  !print*,'stoch_run phi',minval(phi_out),maxval(phi_out),minval(rgauss),maxval(rgauss)
+  !print*,'indicies',G%isd,G%ied,G%idg_offset,G%jsd,G%jed,G%jdg_offset
+  !print*,'rgauss bounds',lbound(rgauss,1),lbound(rgauss,2),ubound(rgauss,1),ubound(rgauss,2)
+  !print*,'rp bounds',lbound(random_pattern,1),lbound(random_pattern,2),ubound(random_pattern,1),ubound(random_pattern,2)
+  !print*,'subset',minval(rgauss(G%idg_offset:G%idg_offset+G%isd,G%jdg_offset:G%jdg_offset+G%jsd)),&
+  !                maxval(rgauss(G%idg_offset:G%idg_offset+G%isd,G%jdg_offset:G%jdg_offset+G%jsd))
+  !print*,'PJP should be posting',stoch_eos_CS%id_stoch_eos,stoch_eos_CS%id_stoch_phi
+  !print*,'PJP min/max',minval(stoch_eos_CS%phi),maxval(stoch_eos_CS%phi),minval(stoch_eos_CS%pattern),maxval(stoch_eos_CS%pattern)
+  !if (stoch_eos_CS%id_stoch_eos > 0) call post_data(stoch_eos_CS%id_stoch_eos, stoch_eos_CS%pattern, diag)!, mask=G%mask2dT)
+  !if (stoch_eos_CS%id_stoch_phi > 0) call post_data(stoch_eos_CS%id_stoch_phi, stoch_eos_CS%phi, diag)!, mask=G%mask2dT)
+  
+  end subroutine MOM_stoch_eos_run
+
+
+  subroutine MOM_calc_varT(G,Gv,h,tv,stoch_eos_CS)
+  type(ocean_grid_type), intent(in)    :: G
+  type(verticalGrid_type),                   intent(in)  :: GV  !< Vertical grid structure
+  real, dimension(SZI_(G),SZJ_(G),SZK_(G)),  intent(in)  :: h   !< Layer thickness [H ~> m]
+  type(thermo_var_ptrs), intent(inout) :: tv   !< Thermodynamics structure
+  type(MOM_stoch_eos_CS), intent(inout) :: stoch_eos_CS
+! locals
+  integer                                ::  i,j,k
+  real :: Tl(5)              ! copy and T in local stencil [degC]
+  real :: mn_T               ! mean of T in local stencil [degC]
+  real :: mn_T2              ! mean of T**2 in local stencil [degC]
+  real :: hl(5)              ! Copy of local stencil of H [H ~> m]
+  real :: r_sm_H             ! Reciprocal of sum of H in local stencil [H-1 ~> m-1]
+
+  ! This block does a thickness weighted variance calculation and helps control for
+  ! extreme gradients along layers which are vanished against topography. It is
+  ! still a poor approximation in the interior when coordinates are strongly tilted.
+  if (.not. associated(tv%varT)) call safe_alloc_ptr(tv%varT, G%isd, G%ied, G%jsd, G%jed, GV%ke)
+  do k=1,G%ke
+     do j=G%isc,G%iec
+        do i=G%jsc,G%jec
+           hl(1) = h(i,j,k) * G%mask2dT(i,j)
+           hl(2) = h(i-1,j,k) * G%mask2dCu(I-1,j)
+           hl(3) = h(i+1,j,k) * G%mask2dCu(I,j)
+           hl(4) = h(i,j-1,k) * G%mask2dCv(i,J-1)
+           hl(5) = h(i,j+1,k) * G%mask2dCv(i,J)
+           r_sm_H = 1. / ( ( hl(1) + ( ( hl(2) + hl(3) ) + ( hl(4) + hl(5) ) ) ) + GV%H_subroundoff )
+           ! Mean of T
+           Tl(1) = tv%T(i,j,k) ; Tl(2) = tv%T(i-1,j,k) ; Tl(3) = tv%T(i+1,j,k)
+           Tl(4) = tv%T(i,j-1,k) ; Tl(5) = tv%T(i,j+1,k)
+           mn_T = ( hl(1)*Tl(1) + ( ( hl(2)*Tl(2) + hl(3)*Tl(3) ) + ( hl(4)*Tl(4) + hl(5)*Tl(5) ) ) ) * r_sm_H
+           ! Adjust T vectors to have zero mean
+           Tl(:) = Tl(:) - mn_T ; mn_T = 0.
+           ! Variance of T
+           mn_T2 = ( hl(1)*Tl(1)*Tl(1) + ( ( hl(2)*Tl(2)*Tl(2) + hl(3)*Tl(3)*Tl(3) ) &
+                                         + ( hl(4)*Tl(4)*Tl(4) + hl(5)*Tl(5)*Tl(5) ) ) ) * r_sm_H
+           ! Variance should be positive but round-off can violate this. Calculating
+           ! variance directly would fix this but requires more operations.
+           tv%varT(i,j,k) = max(0., mn_T2)
+        enddo
+     enddo
+  enddo
+  ! if stochastic, perturb
+  if (stoch_eos_CS%use_stoch_eos) then
+     do k=1,G%ke
+        do j=G%jsd,G%jed
+           do i=G%isd,G%ied
+               tv%varT(i,j,k) = exp (stoch_eos_CS%pattern(i,j)) * tv%varT(i,j,k)
+           enddo
+        enddo
+     enddo
+  endif
+  end subroutine MOM_calc_varT
+
+end module MOM_stoch_eos
+
