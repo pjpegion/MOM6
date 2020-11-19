@@ -763,8 +763,8 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
    endif
 
   if (CS%id_e_tidal>0) call post_data(CS%id_e_tidal, e_tidal, CS%diag)
-  if (CS%id_rho_pgf) call post_data(CS%id_rho_pgf, rho_pgf, CS%diag)
-  if (CS%id_rho_stanley_pgf) call post_data(CS%id_rho_stanley_pgf, rho_stanley_pgf, CS%diag)
+  if (CS%id_rho_pgf>0) call post_data(CS%id_rho_pgf, rho_pgf, CS%diag)
+  if (CS%id_rho_stanley_pgf>0) call post_data(CS%id_rho_stanley_pgf, rho_stanley_pgf, CS%diag)
 
 end subroutine PressureForce_FV_Bouss
 
