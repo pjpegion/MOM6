@@ -771,7 +771,7 @@ subroutine int_density_dz_generic_ppm(k, tv, T_t, T_b, S_t, S_b, e, &
   t6 = 0.
   use_PPM = .true. ! This is a place-holder to allow later re-use of this function
 
-  if (use_stanley_eos) then !use_stanley_eos = use_varT .or. use_covarTS .or. use_varS
+  if (use_stanley_eos) then 
      use_varT = associated(tv%varT)
      use_covarTS = associated(tv%covarTS)
      use_varS = associated(tv%varS)

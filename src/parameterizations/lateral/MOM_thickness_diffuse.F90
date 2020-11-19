@@ -1938,7 +1938,7 @@ subroutine thickness_diffuse_init(Time, G, GV, US, param_file, diag, CDp, CS)
                  default=1.e-15, units="nondim", do_not_log=.not.CS%use_FGNV_streamfn)
   call get_param(param_file, mdl, "USE_STANLEY_GM", CS%use_stanley_gm, &
                  "If true, turn on Stanley SGS T variance parameterization "// &
-                 "in PGF code.", default=.false.)
+                 "in GM code.", default=.false.)
   call get_param(param_file, mdl, "OMEGA", omega, &
                  "The rotation rate of the earth.", &
                  default=7.2921e-5, units="s-1", scale=US%T_to_s, do_not_log=.not.CS%use_FGNV_streamfn)

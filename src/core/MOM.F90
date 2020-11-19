@@ -1821,9 +1821,6 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, restart_CSp, &
   call get_param(param_file, "MOM", "USE_REGRIDDING", CS%use_ALE_algorithm, &
                  "If True, use the ALE algorithm (regridding/remapping). "//&
                  "If False, use the layered isopycnal algorithm.", default=.false. )
-  !call get_param(param_file, "MOM", "STOCH_EOS", CS%stoch_eos_CS%use_stoch_eos, &
-  !               "If true, stochastic perturbations are applied "//&
-  !               "to the EOS.", default=.false.)
   call get_param(param_file, "MOM", "BULKMIXEDLAYER", bulkmixedlayer, &
                  "If true, use a Kraus-Turner-like bulk mixed layer "//&
                  "with transitional buffer layers.  Layers 1 through "//&
