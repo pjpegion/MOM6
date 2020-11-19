@@ -112,9 +112,6 @@ contains
   call random_2d_constructor(rn_CS, G%HI, Time, seed)
   call random_2d_norm(rn_CS, G%HI, rgauss)
   ! advance AR(1)
-  print*,'isd,ied,jsd,jed',G%isd,G%ied,G%jsd,G%jed
-  print*,'size of u x',size(u,1),lbound(u,1),ubound(u,1)
-  print*,'size of u y',size(u,2),lbound(u,2),ubound(u,2)
   do j=G%jsc,G%jec
      do i=G%isc,G%iec
         ubar=0.5*(u(I,j,1)+u(I-1,j,1))
@@ -185,8 +182,8 @@ contains
   ! if stochastic, perturb
   if (stoch_eos_CS%use_stoch_eos) then
      do k=1,G%ke
-        do j=G%jsd,G%jed
-           do i=G%isd,G%ied
+        do j=G%jsc,G%jec
+           do i=G%isc,G%iec
                tv%varT(i,j,k) = exp (stoch_eos_CS%pattern(i,j)) * tv%varT(i,j,k)
            enddo
         enddo

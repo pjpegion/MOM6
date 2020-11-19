@@ -56,7 +56,6 @@ type, public :: PressureForce_FV_CS ; private
                             !! By the default (1) is for a piecewise linear method
   logical :: use_stanley_pgf  ! If true, turn on Stanley parameterization in the PGF 
   integer :: id_e_tidal = -1 !< Diagnostic identifier
-  integer :: id_tvar_sgs = -1 !< Diagnostic identifier
   integer :: id_rho_pgf = -1 !< Diagnostic identifier
   integer :: id_rho_stanley_pgf = -1 !< Diagnostic identifier
   type(tidal_forcing_CS), pointer :: tides_CSp => NULL() !< Tides control structure
@@ -764,7 +763,6 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
    endif
 
   if (CS%id_e_tidal>0) call post_data(CS%id_e_tidal, e_tidal, CS%diag)
-  if (CS%id_tvar_sgs>0) call post_data(CS%id_tvar_sgs, tv%varT, CS%diag)
   if (CS%id_tvar_sgs>0) call post_data(CS%id_rho_pgf, rho_pgf, CS%diag)
   if (CS%id_tvar_sgs>0) call post_data(CS%id_rho_stanley_pgf, rho_stanley_pgf, CS%diag)
 
@@ -834,8 +832,6 @@ subroutine PressureForce_FV_init(Time, G, GV, US, param_file, diag, CS, tides_CS
                  "If true, turn on Stanley SGS T variance parameterization "// &
                  "in PGF code.", default=.false.)
   if (CS%use_stanley_pgf) then
-    CS%id_tvar_sgs = register_diag_field('ocean_model', 'tvar_sgs_pgf', diag%axesTL, &
-        Time, 'SGS temperature variance used in PGF', 'degC2')
     CS%id_rho_pgf = register_diag_field('ocean_model', 'rho_pgf', diag%axesTL, &
         Time, 'rho in PGF', 'kg m3')
     CS%id_rho_stanley_pgf = register_diag_field('ocean_model', 'rho_stanley_pgf', diag%axesTL, &

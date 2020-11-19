@@ -992,7 +992,6 @@ subroutine step_MOM_dynamics(forces, p_surf_begin, p_surf_end, dt, dt_thermo, &
   showCallTree = callTree_showQuery()
 
   call cpu_clock_begin(id_clock_dynamics)
-  print*,'calling stoch_eos_run',size(u,1),size(u,2),size(v,1),size(v,2)
   if (CS%stoch_eos_CS%use_stoch_eos) call MOM_stoch_eos_run(G,u,v,dt_thermo,Time_local,CS%stoch_eos_CS,CS%diag)
   call MOM_calc_varT(G,GV,h,CS%tv,CS%stoch_eos_CS)
 
