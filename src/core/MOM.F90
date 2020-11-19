@@ -158,7 +158,7 @@ type MOM_diag_IDs
   integer :: id_u  = -1, id_v  = -1, id_h  = -1
   !>@}
   !> 2-d state field diagnotic ID
-  integer :: id_ssh_inst = -1, id_stoch_eos = -1, id_stoch_phi = -1
+  integer :: id_ssh_inst = -1, id_stoch_eos = -1, id_stoch_phi = -1, id_tvar_sgs=-1
 end type MOM_diag_IDs
 
 !> Control structure for the MOM module, including the variables that describe
@@ -1127,6 +1127,7 @@ subroutine step_MOM_dynamics(forces, p_surf_begin, p_surf_end, dt, dt_thermo, &
   if (IDs%id_h > 0) call post_data(IDs%id_h, h, CS%diag)
   if (IDs%id_stoch_eos > 0) call post_data(IDs%id_stoch_eos, CS%stoch_eos_CS%pattern, CS%diag)!, mask=G%mask2dT)
   if (IDs%id_stoch_phi > 0) call post_data(IDs%id_stoch_phi, CS%stoch_eos_CS%phi, CS%diag)!, mask=G%mask2dT)
+  if (IDs%id_tvar_sgs > 0) call post_data(IDs%id_tvar_sgs, CS%tv%varT, CS%diag)!, mask=G%mask2dT)
   call disable_averaging(CS%diag)
   call cpu_clock_end(id_clock_diagnostics) ; call cpu_clock_end(id_clock_other)
 
@@ -1820,9 +1821,9 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, restart_CSp, &
   call get_param(param_file, "MOM", "USE_REGRIDDING", CS%use_ALE_algorithm, &
                  "If True, use the ALE algorithm (regridding/remapping). "//&
                  "If False, use the layered isopycnal algorithm.", default=.false. )
-  call get_param(param_file, "MOM", "STOCH_EOS", CS%stoch_eos_CS%use_stoch_eos, &
-                 "If true, stochastic perturbations are applied "//&
-                 "to the EOS.", default=.false.)
+  !call get_param(param_file, "MOM", "STOCH_EOS", CS%stoch_eos_CS%use_stoch_eos, &
+  !               "If true, stochastic perturbations are applied "//&
+  !               "to the EOS.", default=.false.)
   call get_param(param_file, "MOM", "BULKMIXEDLAYER", bulkmixedlayer, &
                  "If true, use a Kraus-Turner-like bulk mixed layer "//&
                  "with transitional buffer layers.  Layers 1 through "//&
@@ -2861,6 +2862,9 @@ subroutine register_diags(Time, G, GV, US, IDs, diag)
       'random pattern for EOS', 'None')
   IDs%id_stoch_phi = register_diag_field('ocean_model', 'stoch_phi', diag%axesT1, Time, &
       'phi for EOS', 'None')
+  IDs%id_tvar_sgs = register_diag_field('ocean_model', 'tvar_sgs', diag%axesTL, Time, &
+      'Parameterized SGS Temperature Variance ', 'None')
+		
 end subroutine register_diags
 
 !> Set up CPU clock IDs for timing various subroutines.

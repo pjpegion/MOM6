@@ -36,6 +36,7 @@ type, public :: MOM_stoch_eos_CS
   real ALLOCABLE_, dimension(NIMEM_,NJMEM_) :: phi
                     !< temporal correlation stochastic EOS (deugging)
   logical :: use_stoch_eos  !< If true, use the stochastic equation of state (Stanley et al. 2020)
+  real :: stanley_coeff 
 !  integer :: id_stoch_eos  = -1, id_stoch_phi  = -1
 end type MOM_stoch_eos_CS
 
@@ -56,7 +57,10 @@ contains
   !pi=2*acos(0.0)
   call get_param(param_file, "MOM", "STOCH_EOS", stoch_eos_CS%use_stoch_eos, &
                  "If true, stochastic perturbations are applied "//&
-                 "to the EOS.", default=.false.)
+                 "to the EOS in the PGF.", default=.false.)
+  call get_param(param_file, "MOM", "STANLEY_COEFF", stoch_eos_CS%stanley_coeff, &
+                 "Coefficient correlating the temperature gradient "//&
+                 "and SGS T variance.", default=0.0)
   ALLOC_(stoch_eos_CS%pattern(G%isd:G%ied,G%jsd:G%jed)) ; stoch_eos_CS%pattern(:,:) = 0.0
   vd = var_desc("stoch_eos_pattern","nondim","Random pattern for stoch EOS",'h','1')
   call register_restart_field(stoch_eos_CS%pattern, vd, .false., restart_CS)
@@ -174,7 +178,7 @@ contains
                                          + ( hl(4)*Tl(4)*Tl(4) + hl(5)*Tl(5)*Tl(5) ) ) ) * r_sm_H
            ! Variance should be positive but round-off can violate this. Calculating
            ! variance directly would fix this but requires more operations.
-           tv%varT(i,j,k) = max(0., mn_T2)
+           tv%varT(i,j,k) = stoch_eos_CS%stanley_coeff * max(0., mn_T2)
         enddo
      enddo
   enddo

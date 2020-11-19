@@ -54,9 +54,7 @@ type, public :: PressureForce_FV_CS ; private
   integer :: Recon_Scheme   !< Order of the polynomial of the reconstruction of T & S
                             !! for the finite volume pressure gradient calculation.
                             !! By the default (1) is for a piecewise linear method
-  real :: Stanley_T2_det_coeff !< The coefficient correlating SGS temperature variance with
-                            !! the mean temperature gradient in the deterministic part of
-                            !! the Stanley form of the Brankart correction.
+  logical :: use_stanley_pgf  ! If true, turn on Stanley parameterization in the PGF 
   integer :: id_e_tidal = -1 !< Diagnostic identifier
   integer :: id_tvar_sgs = -1 !< Diagnostic identifier
   integer :: id_rho_pgf = -1 !< Diagnostic identifier
@@ -163,7 +161,7 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_
 
   if (.not.associated(CS)) call MOM_error(FATAL, &
        "MOM_PressureForce_FV_nonBouss: Module must be initialized before it is used.")
-  if (CS%Stanley_T2_det_coeff>=0.) call MOM_error(FATAL, &
+  if (CS%use_stanley_pgf) call MOM_error(FATAL, &
        "MOM_PressureForce_FV_nonBouss: The Stanley parameterization is not yet"//&
        "implemented in non-Boussinesq mode.")
 
@@ -473,7 +471,6 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
                                         ! density [kg m-3] from EOS with and without SGS T variance 
                                         ! in Stanley parameterization.
   real :: rho_stanley_scalar ! Scalar quantity to hold density [kg m-3] in Stanley diagnostics.
-  real :: tv_stanley_scalar ! Scalar quantity to hold SGS T variance [degc2] in Stanley diagnostics. 
   real :: rho_in_situ(SZI_(G)) ! The in situ density [R ~> kg m-3].
   real :: p_ref(SZI_(G))     !   The pressure used to calculate the coordinate
                              ! density, [R L2 T-2 ~> Pa] (usually 2e7 Pa = 2000 dbar).
@@ -659,12 +656,12 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
         if ( CS%Recon_Scheme == 1 ) then
               call int_density_dz_generic_plm(k, tv,  T_t, T_b, S_t, S_b, e, &
                        rho_ref, CS%Rho0, GV%g_Earth, dz_neglect, G%bathyT, &
-                       G%HI, GV, tv%eqn_of_state, US, dpa, intz_dpa, intx_dpa, inty_dpa, &
+                       G%HI, GV, tv%eqn_of_state, US, CS%use_stanley_pgf, dpa, intz_dpa, intx_dpa, inty_dpa, &
                        useMassWghtInterp=CS%useMassWghtInterp)
         elseif ( CS%Recon_Scheme == 2 ) then
           call int_density_dz_generic_ppm(k, tv, T_t, T_b, S_t, S_b, e, &
                     rho_ref, CS%Rho0, GV%g_Earth, dz_neglect, G%bathyT, &
-                    G%HI, GV, tv%eqn_of_state, US, dpa, intz_dpa, intx_dpa, inty_dpa, &
+                    G%HI, GV, tv%eqn_of_state, US, CS%use_stanley_pgf, dpa, intz_dpa, intx_dpa, inty_dpa, &
                     useMassWghtInterp=CS%useMassWghtInterp)
         endif
       else
@@ -754,14 +751,13 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
     endif
   endif
 
-  if (CS%Stanley_T2_det_coeff>=0.) then
+  if (CS%use_stanley_pgf) then
     do k=1, nz ; do j=js-1,je+1 ; do i=is-1,ie+1
       p_stanley(i,j,k)= -1 * (rho_ref * (GV%g_Earth * e(i,j,k)))
-      tv_stanley_scalar=tv%varT(i,j,k) * CS%Stanley_T2_det_coeff
       call calculate_density(tv%T(i,j,k), tv%S(i,j,k), p_stanley(i,j,k), 0.0, 0.0, 0.0, &
          rho_stanley_scalar, tv%eqn_of_state) 
       rho_pgf(i,j,k)=rho_stanley_scalar
-      call calculate_density(tv%T(i,j,k), tv%S(i,j,k), p_stanley(i,j,k), tv_stanley_scalar, 0.0, 0.0, &
+      call calculate_density(tv%T(i,j,k), tv%S(i,j,k), p_stanley(i,j,k), tv%varT(i,j,k), 0.0, 0.0, &
          rho_stanley_scalar, tv%eqn_of_state) 
       rho_stanley_pgf(i,j,k)=rho_stanley_scalar
     enddo; enddo; enddo
@@ -834,12 +830,10 @@ subroutine PressureForce_FV_init(Time, G, GV, US, param_file, diag, CS, tides_CS
                  "boundary cells is extrapolated, rather than using PCM "//&
                  "in these cells. If true, the same order polynomial is "//&
                  "used as is used for the interior cells.", default=.true.)
-  call get_param(param_file, mdl, "PGF_STANLEY_T2_DET_COEFF", CS%Stanley_T2_det_coeff, &
-                 "The coefficient correlating SGS temperature variance with "// &
-                 "the mean temperature gradient in the deterministic part of "// &
-                 "the Stanley form of the Brankart correction. "// &
-                 "Negative values disable the scheme.", units="nondim", default=-1.0)
-  if (CS%Stanley_T2_det_coeff>=0.) then
+  call get_param(param_file, mdl, "USE_STANLEY_PGF", CS%use_stanley_pgf, &
+                 "If true, turn on Stanley SGS T variance parameterization "// &
+                 "in PGF code.", default=.false.)
+  if (CS%use_stanley_pgf) then
     CS%id_tvar_sgs = register_diag_field('ocean_model', 'tvar_sgs_pgf', diag%axesTL, &
         Time, 'SGS temperature variance used in PGF', 'degC2')
     CS%id_rho_pgf = register_diag_field('ocean_model', 'rho_pgf', diag%axesTL, &
