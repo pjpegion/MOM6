@@ -182,8 +182,8 @@ contains
   ! if stochastic, perturb
   if (stoch_eos_CS%use_stoch_eos) then
      do k=1,G%ke
-        do j=G%jsc,G%jec
-           do i=G%isc,G%iec
+        do j=G%jsc-1,G%jec+1
+           do i=G%isc-1,G%iec+1
                tv%varT(i,j,k) = exp (stoch_eos_CS%pattern(i,j)) * tv%varT(i,j,k)
            enddo
         enddo
