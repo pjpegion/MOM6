@@ -755,8 +755,8 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
 
   if (CS%use_stanley_pgf) then
     do j=js-1,je+1 ; do i=is-1,ie+1 ; 
-	p_stanley_scalar=0.0
-	do k=1, nz 
+      p_stanley_scalar=0.0
+      do k=1, nz 
       p_stanley_scalar = p_stanley_scalar + 0.5 * h(i,j,k) * GV%H_to_Pa !Pressure at mid-point of layer
       call calculate_density(tv%T(i,j,k), tv%S(i,j,k), p_stanley_scalar, 0.0, 0.0, 0.0, &
          rho_stanley_scalar, tv%eqn_of_state) 
@@ -764,8 +764,8 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
       call calculate_density(tv%T(i,j,k), tv%S(i,j,k), p_stanley_scalar, tv%varT(i,j,k), 0.0, 0.0, &
          rho_stanley_scalar, tv%eqn_of_state) 
       rho_stanley_pgf(i,j,k) = rho_stanley_scalar
-	  p_stanley(i,j,k) = p_stanley_scalar
-	  p_stanley_scalar = p_stanley_scalar + 0.5 * h(i,j,k) * GV%H_to_Pa !Pressure at bottom of layer	  
+      p_stanley(i,j,k) = p_stanley_scalar
+      p_stanley_scalar = p_stanley_scalar + 0.5 * h(i,j,k) * GV%H_to_Pa !Pressure at bottom of layer	  
     enddo; enddo; enddo
    endif
 
