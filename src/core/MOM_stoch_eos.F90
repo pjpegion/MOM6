@@ -30,6 +30,7 @@ type(PRNG)  ::  rn_CS
 !integer(8) :: npts
 !real :: pi
 logical first_time
+  
 type, public :: MOM_stoch_eos_CS 
   real,public  ALLOCABLE_, dimension(NIMEM_,NJMEM_) :: pattern
                     !< Random pattern for stochastic EOS
@@ -121,6 +122,7 @@ contains
         stoch_eos_CS%phi(i,j)=phi
      enddo
   enddo
+  
   !print*,'stoch_run ubar',minval(u),maxval(u),minval(v),maxval(v)
   !print*,'stoch_run rp',minval(random_pattern),maxval(random_pattern),minval(rgauss),maxval(rgauss)
   !print*,'stoch_run phi',minval(phi_out),maxval(phi_out),minval(rgauss),maxval(rgauss)

@@ -409,6 +409,8 @@ integer :: id_clock_ALE
 integer :: id_clock_other
 integer :: id_clock_offline_tracer
 integer :: id_clock_unit_tests
+integer :: id_clock_stoch
+integer :: id_clock_varT
 !>@}
 
 contains
@@ -992,8 +994,12 @@ subroutine step_MOM_dynamics(forces, p_surf_begin, p_surf_end, dt, dt_thermo, &
   showCallTree = callTree_showQuery()
 
   call cpu_clock_begin(id_clock_dynamics)
+  call cpu_clock_begin(id_clock_stoch)
   if (CS%stoch_eos_CS%use_stoch_eos) call MOM_stoch_eos_run(G,u,v,dt_thermo,Time_local,CS%stoch_eos_CS,CS%diag)
+  call cpu_clock_end(id_clock_stoch)
+  call cpu_clock_begin(id_clock_varT)
   call MOM_calc_varT(G,GV,h,CS%tv,CS%stoch_eos_CS)
+  call cpu_clock_end(id_clock_varT)
 
   if ((CS%t_dyn_rel_adv == 0.0) .and. CS%thickness_diffuse .and. CS%thickness_diffuse_first) then
 
@@ -2893,6 +2899,8 @@ subroutine MOM_timing_init(CS)
  if (CS%offline_tracer_mode) then
   id_clock_offline_tracer = cpu_clock_id('Ocean offline tracers', grain=CLOCK_SUBCOMPONENT)
  endif
+  id_clock_stoch = cpu_clock_id('(Stochastic EOS)', grain=CLOCK_MODULE)
+  id_clock_varT = cpu_clock_id('(SGS Temperature Variance)', grain=CLOCK_MODULE)
 
 end subroutine MOM_timing_init
 
