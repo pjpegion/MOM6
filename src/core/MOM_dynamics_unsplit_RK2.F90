@@ -240,6 +240,10 @@ subroutine step_MOM_dyn_unsplit_RK2(u_in, v_in, h_in, tv, visc, Time_local, dt, 
   real, dimension(SZI_(G),SZJ_(G),SZK_(G)) :: h_av, hp
   real, dimension(SZIB_(G),SZJ_(G),SZK_(G)) :: up ! Predicted zonal velocities [L T-1 ~> m s-1]
   real, dimension(SZI_(G),SZJB_(G),SZK_(G)) :: vp ! Predicted meridional velocities [L T-1 ~> m s-1]
+  real, dimension(SZI_(G),SZJ_(G)) :: &
+    rp_out      ! sea surface height, which may be based on eta_av [m]
+  real, dimension(SZI_(G),SZJ_(G)) :: &
+    phi_out      ! sea surface height, which may be based on eta_av [m]
   real, dimension(:,:), pointer :: p_surf => NULL()
   real :: dt_pred   ! The time step for the predictor part of the baroclinic time stepping [T ~> s]
   real :: dt_visc   ! The time step for a part of the update due to viscosity [T ~> s]

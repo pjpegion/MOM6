@@ -884,7 +884,6 @@ subroutine int_density_dz_generic_ppm(k, tv, T_t, T_b, S_t, S_b, e, &
         S5(n) = wt_t(n) * S_top + wt_b(n) * ( S_bot + s6 * wt_t(n) )
         T5(n) = wt_t(n) * T_top + wt_b(n) * ( T_bot + t6 * wt_t(n) )
       enddo
-
       if (use_stanley_eos) then
         if (use_varT) T25(:) = w_left*tv%varT(i,j,k) + w_right*tv%varT(i+1,j,k)
         if (use_covarTS) TS5(:) = w_left*tv%covarTS(i,j,k) + w_right*tv%covarTS(i+1,j,k)

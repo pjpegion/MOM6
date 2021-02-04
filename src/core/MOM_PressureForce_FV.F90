@@ -59,6 +59,8 @@ type, public :: PressureForce_FV_CS ; private
                             !! the Stanley form of the Brankart correction.
   integer :: id_e_tidal = -1 !< Diagnostic identifier
   integer :: id_tvar_sgs = -1 !< Diagnostic identifier
+  integer :: id_rho_pgf = -1 !< Diagnostic identifier
+  integer :: id_rho_stanley_pgf = -1 !< Diagnostic identifier
   type(tidal_forcing_CS), pointer :: tides_CSp => NULL() !< Tides control structure
 end type PressureForce_FV_CS
 
@@ -466,6 +468,12 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
   real, dimension(SZI_(G),SZJ_(G),SZK_(G)) :: &
     S_t, S_b, T_t, T_b ! Top and bottom edge values for linear reconstructions
                        ! of salinity and temperature within each layer.
+  real, dimension(SZI_(G),SZJ_(G),SZK_(G)) :: &
+    p_stanley, rho_pgf, rho_stanley_pgf ! Pressure [Pa] estimated with Rho_0 and 
+                                        ! density [kg m-3] from EOS with and without SGS T variance 
+                                        ! in Stanley parameterization.
+  real :: rho_stanley_scalar ! Scalar quantity to hold density [kg m-3] in Stanley diagnostics.
+  real :: tv_stanley_scalar ! Scalar quantity to hold SGS T variance [degc2] in Stanley diagnostics. 
   real :: rho_in_situ(SZI_(G)) ! The in situ density [R ~> kg m-3].
   real :: p_ref(SZI_(G))     !   The pressure used to calculate the coordinate
                              ! density, [R L2 T-2 ~> Pa] (usually 2e7 Pa = 2000 dbar).
@@ -480,9 +488,11 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
   logical :: use_ALE         ! If true, use an ALE pressure reconstruction.
   logical :: use_EOS         ! If true, density is calculated from T & S using an equation of state.
   type(thermo_var_ptrs) :: tv_tmp! A structure of temporary T & S.
- !real :: dTdi2, dTdj2       ! Differences in T variance [degC2]
-  real :: Tl(5), mn_T, mn_T2 ! copy and moment of local stenil of T [degC or degC2]
-  real :: Hl(5), mn_H        ! Copy of local stencial of H [H ~> m]
+  real :: Tl(5)              ! copy and T in local stencil [degC]
+  real :: mn_T               ! mean of T in local stencil [degC]
+  real :: mn_T2              ! mean of T**2 in local stencil [degC]
+  real :: hl(5)              ! Copy of local stencil of H [H ~> m]
+  real :: r_sm_H             ! Reciprocal of sum of H in local stencil [H-1 ~> m-1]
   real, parameter :: C1_6 = 1.0/6.0
   integer, dimension(2) :: EOSdom ! The i-computational domain for the equation of state
   integer :: is, ie, js, je, Isq, Ieq, Jsq, Jeq, nz, nkmb
@@ -502,45 +512,6 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
   do i=Isq,Ieq+1 ; p0(i) = 0.0 ; enddo
   use_ALE = .false.
   if (associated(ALE_CSp)) use_ALE = CS%reconstruct .and. use_EOS
-
-  if (CS%Stanley_T2_det_coeff>=0.) then
-    if (.not. associated(tv%varT)) call safe_alloc_ptr(tv%varT, G%isd, G%ied, G%jsd, G%jed, GV%ke)
-    do k=1, nz ; do j=js-1,je+1 ; do i=is-1,ie+1
-      ! Strictly speaking we should be estimate the horizontal grid-scale variance
-      ! but neither of the following blocks make a rotation to the horizontal
-      ! but work along coordinate
-
-      ! This block calculates a simple |delta T| along coordinates and does
-      ! not allow vanishing layer thicknesses or layers tracking topography
-      !! SGS variance in i-direction [degC2]
-      !dTdi2 = ( ( G%mask2dCu(I  ,j) * G%IdxCu(I  ,j) * ( tv%T(i+1,j,k) - tv%T(i,j,k) ) &
-      !          + G%mask2dCu(I-1,j) * G%IdxCu(I-1,j) * ( tv%T(i,j,k) - tv%T(i-1,j,k) ) &
-      !          ) * G%dxT(i,j) * 0.5 )**2
-      !! SGS variance in j-direction [degC2]
-      !dTdj2 = ( ( G%mask2dCv(i,J  ) * G%IdyCv(i,J  ) * ( tv%T(i,j+1,k) - tv%T(i,j,k) ) &
-      !          + G%mask2dCv(i,J-1) * G%IdyCv(i,J-1) * ( tv%T(i,j,k) - tv%T(i,j-1,k) ) &
-      !          ) * G%dyT(i,j) * 0.5 )**2
-      !tv%varT(i,j,k) = CS%Stanley_T2_det_coeff * 0.5 * ( dTdi2 + dTdj2 )
-
-      ! This block does a thickness weighted variance calculation and helps control for
-      ! extreme gradients along layers which are vanished against topography. It is
-      ! still a poor approximation in the interior when coordinates are strongly tilted.
-      hl(1) = h(i,j,k) ; hl(2) = h(i-1,j,k) ; hl(3) = h(i+1,j,k) ; hl(4) = h(i,j-1,k) ; hl(5) = h(i,j+1,k)
-      mn_H = ( hl(1) + ( ( hl(2) + hl(3) ) + ( hl(4) + hl(5) ) ) ) + GV%H_subroundoff
-      mn_H = 1. / mn_H ! Hereafter, mn_H is the reciprocal of mean h for the stencil
-      ! Mean of T
-      Tl(1) = tv%T(i,j,k) ; Tl(2) = tv%T(i-1,j,k) ; Tl(3) = tv%T(i+1,j,k) ; Tl(4) = tv%T(i,j-1,k) ; Tl(5) = tv%T(i,j+1,k)
-      mn_T = ( hl(1)*Tl(1) + ( ( hl(2)*Tl(2) + hl(3)*Tl(3) ) + ( hl(4)*Tl(4) + hl(5)*Tl(5) ) ) ) * mn_H
-      ! Adjust T vectors to have zero mean
-      Tl(:) = Tl(:) - mn_T ; mn_T = 0.
-      ! Variance of T
-      mn_T2 = ( hl(1)*Tl(1)*Tl(1) + ( ( hl(2)*Tl(2)*Tl(2) + hl(3)*Tl(3)*Tl(3) ) &
-                                    + ( hl(4)*Tl(4)*Tl(4) + hl(5)*Tl(5)*Tl(5) ) ) ) * mn_H
-      ! Variance should be positive but round-off can violate this. Calculating
-      ! variance directly would fix this but requires more operations.
-      tv%varT(i,j,k) = CS%Stanley_T2_det_coeff * max(0., mn_T2 - mn_T*mn_T)
-    enddo ; enddo ; enddo
-  endif
 
   h_neglect = GV%H_subroundoff
   dz_neglect = GV%H_subroundoff * GV%H_to_Z
@@ -678,7 +649,6 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
   do k=1,nz
     ! Calculate 4 integrals through the layer that are required in the
     ! subsequent calculation.
-
     if (use_EOS) then
       ! The following routine computes the integrals that are needed to
       ! calculate the pressure gradient force. Linear profiles for T and S are
@@ -687,10 +657,10 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
       ! where the layers are located.
       if ( use_ALE ) then
         if ( CS%Recon_Scheme == 1 ) then
-          call int_density_dz_generic_plm(k, tv,  T_t, T_b, S_t, S_b, e, &
-                    rho_ref, CS%Rho0, GV%g_Earth, dz_neglect, G%bathyT, &
-                    G%HI, GV, tv%eqn_of_state, US, dpa, intz_dpa, intx_dpa, inty_dpa, &
-                    useMassWghtInterp=CS%useMassWghtInterp)
+              call int_density_dz_generic_plm(k, tv,  T_t, T_b, S_t, S_b, e, &
+                       rho_ref, CS%Rho0, GV%g_Earth, dz_neglect, G%bathyT, &
+                       G%HI, GV, tv%eqn_of_state, US, dpa, intz_dpa, intx_dpa, inty_dpa, &
+                       useMassWghtInterp=CS%useMassWghtInterp)
         elseif ( CS%Recon_Scheme == 2 ) then
           call int_density_dz_generic_ppm(k, tv, T_t, T_b, S_t, S_b, e, &
                     rho_ref, CS%Rho0, GV%g_Earth, dz_neglect, G%bathyT, &
@@ -784,8 +754,23 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
     endif
   endif
 
+  if (CS%Stanley_T2_det_coeff>=0.) then
+    do k=1, nz ; do j=js-1,je+1 ; do i=is-1,ie+1
+      p_stanley(i,j,k)= -1 * (rho_ref * (GV%g_Earth * e(i,j,k)))
+      tv_stanley_scalar=tv%varT(i,j,k) * CS%Stanley_T2_det_coeff
+      call calculate_density(tv%T(i,j,k), tv%S(i,j,k), p_stanley(i,j,k), 0.0, 0.0, 0.0, &
+         rho_stanley_scalar, tv%eqn_of_state) 
+      rho_pgf(i,j,k)=rho_stanley_scalar
+      call calculate_density(tv%T(i,j,k), tv%S(i,j,k), p_stanley(i,j,k), tv_stanley_scalar, 0.0, 0.0, &
+         rho_stanley_scalar, tv%eqn_of_state) 
+      rho_stanley_pgf(i,j,k)=rho_stanley_scalar
+    enddo; enddo; enddo
+   endif
+
   if (CS%id_e_tidal>0) call post_data(CS%id_e_tidal, e_tidal, CS%diag)
   if (CS%id_tvar_sgs>0) call post_data(CS%id_tvar_sgs, tv%varT, CS%diag)
+  if (CS%id_tvar_sgs>0) call post_data(CS%id_rho_pgf, rho_pgf, CS%diag)
+  if (CS%id_tvar_sgs>0) call post_data(CS%id_rho_stanley_pgf, rho_stanley_pgf, CS%diag)
 
 end subroutine PressureForce_FV_Bouss
 
@@ -857,6 +842,10 @@ subroutine PressureForce_FV_init(Time, G, GV, US, param_file, diag, CS, tides_CS
   if (CS%Stanley_T2_det_coeff>=0.) then
     CS%id_tvar_sgs = register_diag_field('ocean_model', 'tvar_sgs_pgf', diag%axesTL, &
         Time, 'SGS temperature variance used in PGF', 'degC2')
+    CS%id_rho_pgf = register_diag_field('ocean_model', 'rho_pgf', diag%axesTL, &
+        Time, 'rho in PGF', 'kg m3')
+    CS%id_rho_stanley_pgf = register_diag_field('ocean_model', 'rho_stanley_pgf', diag%axesTL, &
+        Time, 'rho in PGF with Stanley correction', 'kg m3')
   endif
   if (CS%tides) then
     CS%id_e_tidal = register_diag_field('ocean_model', 'e_tidal', diag%axesT1, &

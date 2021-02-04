@@ -57,7 +57,7 @@ use MOM_ALE_sponge,            only : rotate_ALE_sponge, update_ALE_sponge_field
 use MOM_barotropic,            only : Barotropic_CS
 use MOM_boundary_update,       only : call_OBC_register, OBC_register_end, update_OBC_CS
 use MOM_coord_initialization,  only : MOM_initialize_coord
-use MOM_diabatic_driver,       only : diabatic, diabatic_driver_init, diabatic_CS
+use MOM_diabatic_driver,       only : diabatic, diabatic_driver_init, diabatic_CS, extract_diabatic_member
 use MOM_diabatic_driver,       only : adiabatic, adiabatic_driver_init, diabatic_driver_end
 use MOM_diagnostics,           only : calculate_diagnostic_fields, MOM_diagnostics_init
 use MOM_diagnostics,           only : register_transport_diags, post_transport_diagnostics
@@ -100,6 +100,7 @@ use MOM_set_visc,              only : set_viscous_BBL, set_viscous_ML, set_visc_
 use MOM_set_visc,              only : set_visc_register_restarts, set_visc_CS
 use MOM_sponge,                only : init_sponge_diags, sponge_CS
 use MOM_state_initialization,  only : MOM_initialize_state
+use MOM_stoch_eos,             only : MOM_stoch_eos_init,MOM_stoch_eos_run,MOM_stoch_eos_CS,mom_calc_varT
 use MOM_sum_output,            only : write_energy, accumulate_net_input
 use MOM_sum_output,            only : MOM_sum_output_init, sum_output_CS
 use MOM_ALE_sponge,            only : init_ALE_sponge_diags, ALE_sponge_CS
@@ -109,7 +110,7 @@ use MOM_tracer_advect,         only : tracer_advect_end, tracer_advect_CS
 use MOM_tracer_hor_diff,       only : tracer_hordiff, tracer_hor_diff_init
 use MOM_tracer_hor_diff,       only : tracer_hor_diff_end, tracer_hor_diff_CS
 use MOM_tracer_registry,       only : tracer_registry_type, register_tracer, tracer_registry_init
-use MOM_tracer_registry,       only : register_tracer_diagnostics, post_tracer_diagnostics
+use MOM_tracer_registry,       only : register_tracer_diagnostics, post_tracer_diagnostics_at_sync
 use MOM_tracer_registry,       only : post_tracer_transport_diagnostics
 use MOM_tracer_registry,       only : preALE_tracer_diagnostics, postALE_tracer_diagnostics
 use MOM_tracer_registry,       only : lock_tracer_registry, tracer_registry_end
@@ -157,7 +158,7 @@ type MOM_diag_IDs
   integer :: id_u  = -1, id_v  = -1, id_h  = -1
   !>@}
   !> 2-d state field diagnotic ID
-  integer :: id_ssh_inst = -1
+  integer :: id_ssh_inst = -1, id_stoch_eos = -1, id_stoch_phi = -1
 end type MOM_diag_IDs
 
 !> Control structure for the MOM module, including the variables that describe
@@ -224,6 +225,7 @@ type, public :: MOM_control_struct ; private
   logical :: use_ALE_algorithm  !< If true, use the ALE algorithm rather than layered
                     !! isopycnal/stacked shallow water mode. This logical is set by calling the
                     !! function useRegridding() from the MOM_regridding module.
+  type(MOM_stoch_eos_CS) :: stoch_eos_CS !< structure containing random pattern for stoch EOS
   logical :: offline_tracer_mode = .false.
                     !< If true, step_offline() is called instead of step_MOM().
                     !! This is intended for running MOM6 in offline tracer mode
@@ -595,8 +597,9 @@ subroutine step_MOM(forces_in, fluxes_in, sfc_state, Time_start, time_int_in, CS
     dt_therm = dt ; ntstep = 1
     if (associated(fluxes%p_surf)) p_surf => fluxes%p_surf
     CS%tv%p_surf => NULL()
-    if (CS%use_p_surf_in_EOS .and. associated(forces%p_surf)) CS%tv%p_surf => fluxes%p_surf
-
+    if (associated(fluxes%p_surf)) then
+      if (CS%use_p_surf_in_EOS) CS%tv%p_surf => fluxes%p_surf
+    endif
     if (CS%UseWaves) call pass_var(fluxes%ustar, G%Domain, clock=id_clock_pass)
   endif
 
@@ -838,7 +841,7 @@ subroutine step_MOM(forces_in, fluxes_in, sfc_state, Time_start, time_int_in, CS
       call calculate_diagnostic_fields(u, v, h, CS%uh, CS%vh, CS%tv, CS%ADp,  &
                           CS%CDp, p_surf, CS%t_dyn_rel_diag, CS%diag_pre_sync,&
                           G, GV, US, CS%diagnostics_CSp)
-      call post_tracer_diagnostics(CS%Tracer_reg, h, CS%diag_pre_sync, CS%diag, G, GV, CS%t_dyn_rel_diag)
+      call post_tracer_diagnostics_at_sync(CS%Tracer_reg, h, CS%diag_pre_sync, CS%diag, G, GV, CS%t_dyn_rel_diag)
       call diag_copy_diag_to_storage(CS%diag_pre_sync, h, CS%diag)
       if (showCallTree) call callTree_waypoint("finished calculate_diagnostic_fields (step_MOM)")
       call disable_averaging(CS%diag)
@@ -989,6 +992,9 @@ subroutine step_MOM_dynamics(forces, p_surf_begin, p_surf_end, dt, dt_thermo, &
   showCallTree = callTree_showQuery()
 
   call cpu_clock_begin(id_clock_dynamics)
+  print*,'calling stoch_eos_run',size(u,1),size(u,2),size(v,1),size(v,2)
+  if (CS%stoch_eos_CS%use_stoch_eos) call MOM_stoch_eos_run(G,u,v,dt_thermo,Time_local,CS%stoch_eos_CS,CS%diag)
+  call MOM_calc_varT(G,GV,h,CS%tv,CS%stoch_eos_CS)
 
   if ((CS%t_dyn_rel_adv == 0.0) .and. CS%thickness_diffuse .and. CS%thickness_diffuse_first) then
 
@@ -1119,6 +1125,8 @@ subroutine step_MOM_dynamics(forces, p_surf_begin, p_surf_end, dt, dt_thermo, &
   if (IDs%id_u > 0) call post_data(IDs%id_u, u, CS%diag)
   if (IDs%id_v > 0) call post_data(IDs%id_v, v, CS%diag)
   if (IDs%id_h > 0) call post_data(IDs%id_h, h, CS%diag)
+  if (IDs%id_stoch_eos > 0) call post_data(IDs%id_stoch_eos, CS%stoch_eos_CS%pattern, CS%diag)!, mask=G%mask2dT)
+  if (IDs%id_stoch_phi > 0) call post_data(IDs%id_stoch_phi, CS%stoch_eos_CS%phi, CS%diag)!, mask=G%mask2dT)
   call disable_averaging(CS%diag)
   call cpu_clock_end(id_clock_diagnostics) ; call cpu_clock_end(id_clock_other)
 
@@ -1137,6 +1145,7 @@ subroutine step_MOM_tracer_dyn(CS, G, GV, US, h, Time_local)
   type(time_type),          intent(in)    :: Time_local !< The model time at the end
                                                     !! of the time step.
   type(group_pass_type) :: pass_T_S
+  integer :: halo_sz ! The size of a halo where data must be valid.
   logical :: showCallTree
   showCallTree = callTree_showQuery()
 
@@ -1185,12 +1194,19 @@ subroutine step_MOM_tracer_dyn(CS, G, GV, US, h, Time_local)
   CS%t_dyn_rel_adv = 0.0
   call cpu_clock_end(id_clock_tracer) ; call cpu_clock_end(id_clock_thermo)
 
-  if (CS%diabatic_first .and. associated(CS%tv%T)) then
-    ! Temperature and salinity need halo updates because they will be used
-    ! in the dynamics before they are changed again.
-    call create_group_pass(pass_T_S, CS%tv%T, G%Domain, To_All+Omit_Corners, halo=1)
-    call create_group_pass(pass_T_S, CS%tv%S, G%Domain, To_All+Omit_Corners, halo=1)
-    call do_group_pass(pass_T_S, G%Domain, clock=id_clock_pass)
+  if (associated(CS%tv%T)) then
+    call extract_diabatic_member(CS%diabatic_CSp, diabatic_halo=halo_sz)
+    if (halo_sz > 0) then
+      call create_group_pass(pass_T_S, CS%tv%T, G%Domain, To_All, halo=halo_sz)
+      call create_group_pass(pass_T_S, CS%tv%S, G%Domain, To_All, halo=halo_sz)
+      call do_group_pass(pass_T_S, G%Domain, clock=id_clock_pass)
+    elseif (CS%diabatic_first) then
+      ! Temperature and salinity need halo updates because they will be used
+      ! in the dynamics before they are changed again.
+      call create_group_pass(pass_T_S, CS%tv%T, G%Domain, To_All+Omit_Corners, halo=1)
+      call create_group_pass(pass_T_S, CS%tv%S, G%Domain, To_All+Omit_Corners, halo=1)
+      call do_group_pass(pass_T_S, G%Domain, clock=id_clock_pass)
+    endif
   endif
 
   CS%preadv_h_stored = .false.
@@ -1225,7 +1241,8 @@ subroutine step_MOM_thermo(CS, G, GV, US, u, v, h, tv, fluxes, dtdia, &
   type(group_pass_type) :: pass_T_S, pass_T_S_h, pass_uv_T_S_h
   integer :: dynamics_stencil  ! The computational stencil for the calculations
                                ! in the dynamic core.
-  integer :: i, j, k, is, ie, js, je, nz! , Isq, Ieq, Jsq, Jeq, n
+  integer :: halo_sz ! The size of a halo where data must be valid.
+  integer :: i, j, k, is, ie, js, je, nz
 
   is = G%isc ; ie = G%iec ; js = G%jsc ; je = G%jec ; nz = G%ke
   showCallTree = callTree_showQuery()
@@ -1238,6 +1255,13 @@ subroutine step_MOM_thermo(CS, G, GV, US, u, v, h, tv, fluxes, dtdia, &
 
   if (associated(CS%odaCS)) then
     call apply_oda_tracer_increments(US%T_to_s*dtdia,G,tv,h,CS%odaCS)
+  endif
+
+  if (associated(fluxes%p_surf)) then
+    call extract_diabatic_member(CS%diabatic_CSp, diabatic_halo=halo_sz)
+    if (halo_sz > 0) then
+      call pass_var(fluxes%p_surf, G%Domain, clock=id_clock_pass, halo=halo_sz)
+    endif
   endif
 
   if (update_BBL) then
@@ -1278,12 +1302,14 @@ subroutine step_MOM_thermo(CS, G, GV, US, u, v, h, tv, fluxes, dtdia, &
     if ( CS%use_ALE_algorithm ) then
       call enable_averages(dtdia, Time_end_thermo, CS%diag)
 !         call pass_vector(u, v, G%Domain)
+      call cpu_clock_begin(id_clock_pass)
       if (associated(tv%T)) &
         call create_group_pass(pass_T_S_h, tv%T, G%Domain, To_All+Omit_Corners, halo=1)
       if (associated(tv%S)) &
         call create_group_pass(pass_T_S_h, tv%S, G%Domain, To_All+Omit_Corners, halo=1)
       call create_group_pass(pass_T_S_h, h, G%Domain, To_All+Omit_Corners, halo=1)
       call do_group_pass(pass_T_S_h, G%Domain)
+      call cpu_clock_end(id_clock_pass)
 
       call preAle_tracer_diagnostics(CS%tracer_Reg, G, GV)
 
@@ -1794,6 +1820,9 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, restart_CSp, &
   call get_param(param_file, "MOM", "USE_REGRIDDING", CS%use_ALE_algorithm, &
                  "If True, use the ALE algorithm (regridding/remapping). "//&
                  "If False, use the layered isopycnal algorithm.", default=.false. )
+  call get_param(param_file, "MOM", "STOCH_EOS", CS%stoch_eos_CS%use_stoch_eos, &
+                 "If true, stochastic perturbations are applied "//&
+                 "to the EOS.", default=.false.)
   call get_param(param_file, "MOM", "BULKMIXEDLAYER", bulkmixedlayer, &
                  "If true, use a Kraus-Turner-like bulk mixed layer "//&
                  "with transitional buffer layers.  Layers 1 through "//&
@@ -2330,6 +2359,7 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, restart_CSp, &
   call copy_dyngrid_to_MOM_grid(dG_in, G_in, US)
   call destroy_dyn_horgrid(dG_in)
 
+
   ! Set a few remaining fields that are specific to the ocean grid type.
   call set_first_direction(G, first_direction)
   ! Allocate the auxiliary non-symmetric domain for debugging or I/O purposes.
@@ -2542,6 +2572,8 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, restart_CSp, &
   call set_visc_init(Time, G, GV, US, param_file, diag, CS%visc, CS%set_visc_CSp, restart_CSp, CS%OBC)
   call thickness_diffuse_init(Time, G, GV, US, param_file, diag, CS%CDp, CS%thickness_diffuse_CSp)
 
+  new_sim = is_new_run(restart_CSp)
+  call MOM_stoch_eos_init(G,Time,param_file,CS%stoch_eos_CS,restart_CSp,diag)
   if (CS%split) then
     allocate(eta(SZI_(G),SZJ_(G))) ; eta(:,:) = 0.0
     call initialize_dyn_split_RK2(CS%u, CS%v, CS%h, CS%uh, CS%vh, eta, Time, &
@@ -2625,7 +2657,6 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, restart_CSp, &
   endif
 
   ! This subroutine initializes any tracer packages.
-  new_sim = is_new_run(restart_CSp)
   call tracer_flow_control_init(.not.new_sim, Time, G, GV, US, CS%h, param_file, &
              CS%diag, CS%OBC, CS%tracer_flow_CSp, CS%sponge_CSp, &
              CS%ALE_sponge_CSp, CS%tv)
@@ -2826,6 +2857,10 @@ subroutine register_diags(Time, G, GV, US, IDs, diag)
       v_extensive=.true., conversion=H_convert)
   IDs%id_ssh_inst = register_diag_field('ocean_model', 'SSH_inst', diag%axesT1, &
       Time, 'Instantaneous Sea Surface Height', 'm')
+  IDs%id_stoch_eos = register_diag_field('ocean_model', 'stoch_eos', diag%axesT1, Time, &
+      'random pattern for EOS', 'None')
+  IDs%id_stoch_phi = register_diag_field('ocean_model', 'stoch_phi', diag%axesT1, Time, &
+      'phi for EOS', 'None')
 end subroutine register_diags
 
 !> Set up CPU clock IDs for timing various subroutines.
@@ -3375,7 +3410,7 @@ subroutine extract_surface_state(CS, sfc_state_in)
     endif
   endif
 
-  if (CS%debug) call MOM_surface_chksum("Post extract_sfc", sfc_state, G, US)
+  if (CS%debug) call MOM_surface_chksum("Post extract_sfc", sfc_state, G, US, haloshift=0)
 
   ! Rotate sfc_state back onto the input grid, sfc_state_in
   if (CS%rotate_index) then
