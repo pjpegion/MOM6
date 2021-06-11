@@ -75,14 +75,14 @@ contains
   call random_2d_norm(rn_CS, G%HI, rgauss)
   ! fill array with approximation of grid area needed for decorrelation
   ! time-scale calculation
-  do j=G%js,G%je
-     do i=G%is,G%ie
+  do j=G%jsc,G%jec
+     do i=G%isc,G%iec
         l2_inv(i,j)=1.0/(G%dxT(i,j)**2+G%dyT(i,j)**2)
      enddo
   enddo 
   if (is_new_run(restart_CS)) then
-     do j=G%js,G%je
-        do i=G%is,G%ie
+     do j=G%jsc,G%jec
+        do i=G%isc,G%iec
            stoch_eos_CS%pattern(i,j)=amplitude*rgauss(i,j)
         enddo
      enddo
