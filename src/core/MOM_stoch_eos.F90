@@ -12,6 +12,7 @@ use MOM_diag_mediator,   only : register_diag_field,post_data,diag_ctrl,safe_all
 use MOM_variables,       only : thermo_var_ptrs
 use MOM_verticalGrid,    only : verticalGrid_type
 use MOM_restart,         only : register_restart_field
+use MOM_domains,         only : pass_var
 !use random_numbers_mod, only : getRandomNumbers,initializeRandomNumberStream,randomNumberStream
 
 implicit none
@@ -66,22 +67,22 @@ contains
   vd = var_desc("stoch_eos_pattern","nondim","Random pattern for stoch EOS",'h','1')
   call register_restart_field(stoch_eos_CS%pattern, vd, .false., restart_CS)
   ALLOC_(stoch_eos_CS%phi(G%isd:G%ied,G%jsd:G%jed)) ; stoch_eos_CS%phi(:,:) = 0.0
-  ALLOC_(l2_inv(G%isd:G%ied,G%jsd:G%jed)) ! currently allocating for data domain, should I which to compute domain?
-  ALLOC_(rgauss(G%isd:G%ied,G%jsd:G%jed)) ! currently allocating for data domain, should I which to compute domain?
+  ALLOC_(l2_inv(G%isd:G%ied,G%jsd:G%jed)) 
+  ALLOC_(rgauss(G%isd:G%ied,G%jsd:G%jed)) 
   call get_param(param_file, "MOM", "SEED_STOCH_EOS", seed, &
                  "Specfied seed for random number sequence ", default=0)
   call random_2d_constructor(rn_CS, G%HI, Time, seed)
   call random_2d_norm(rn_CS, G%HI, rgauss)
   ! fill array with approximation of grid area needed for decorrelation
   ! time-scale calculation
-  do j=G%jsd,G%jed
-     do i=G%isd,G%ied
+  do j=G%js,G%je
+     do i=G%is,G%ie
         l2_inv(i,j)=1.0/(G%dxT(i,j)**2+G%dyT(i,j)**2)
      enddo
   enddo 
   if (is_new_run(restart_CS)) then
-     do j=G%jsd,G%jed
-        do i=G%isd,G%ied
+     do j=G%js,G%je
+        do i=G%is,G%ie
            stoch_eos_CS%pattern(i,j)=amplitude*rgauss(i,j)
         enddo
      enddo
@@ -183,6 +184,7 @@ contains
   enddo
   ! if stochastic, perturb
   if (stoch_eos_CS%use_stoch_eos) then
+     call pass_var(stoch_eos_CS%pattern, G%Domain)
      do k=1,G%ke
         do j=G%jsc-1,G%jec+1
            do i=G%isc-1,G%iec+1
